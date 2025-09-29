@@ -5,6 +5,8 @@ import statistics
 import datasetMaxwel as dt      # pastikan modulmu sesuai
 import parameter as pr          # berisi parameterFfDf.parameter (22 dim: 7 FF + 15 DF)
 import random_guessing as rg
+import sys
+import bisect
 
 class HybridGA_InitACO_Maxwell:
     """
@@ -118,7 +120,7 @@ class HybridGA_InitACO_Maxwell:
 
     # =============== ACO hanya untuk inisialisasi ===============
     def _aco_initialize_population(self, vi, effort, actual, n_ants=30, n_iters=10, bins=10):
-        import bisect
+        
         edges, centers = [], []
         for (lb, ub) in self.ranges:
             step = (ub - lb) / bins
@@ -224,10 +226,22 @@ class HybridGA_InitACO_Maxwell:
                     no_improve += 1
                 if best_AE <= self.stoppingFitness or no_improve >= self.patience:
                     break
+            # print("Best AE:", best_AE, "estEffort:", best_est, "actualEffort:", actual)   
+            for gen in range(self.maxIter):
+                ...
+                if best_AE <= self.stoppingFitness or no_improve >= self.patience:
+                    break
+
+            # <-- keluar dari loop gen
+            print(best_est)  
 
             ae_results.append(best_AE)
             est_results.append(best_est)
             actual_results.append(actual)
+
+       
+            # print('value ae result : ', ae_results, 'est results : ', est_results, 'actual effort : ', actual_results)
+            # sys.exit()
 
         MAE = sum(ae_results)/len(ae_results) if ae_results else float('inf')
         return {'MAE': MAE, 'AEs': ae_results, 'estEfforts': est_results, 'actualEfforts': actual_results}
@@ -260,15 +274,21 @@ if __name__ == '__main__':
         "tau_min": 1e-6,
         "tau_max": 100.0,
 
-        # Mapping kolom dataset
+        # Mapping kolom dataset maxwel
         "vi_idx": 0,
         "actual_idx": 2,
         "effort_idx": 4,
+
+        # Mapping kolom dataset zia
+        "vi_idxs": 0,
+        "actual_idxs": 2,
+        "effort_idxs": 4,
     }
 
     gaco = HybridGA_InitACO_Maxwell(parameterSetting)
     result = gaco.run()
-    print('Hybrid Init-ACO GA (Maxwell):', result)
+    # print('Hybrid Init-ACO GA (Maxwell):', result)
+    # sys.exit()
 
     # ==== Evaluasi baseline (contoh random guessing) ====
     MAE = result['MAE']
@@ -279,10 +299,11 @@ if __name__ == '__main__':
     run = rg.RandomGuessing(actualEfforts, runs)
     randomGuessing = run.mainRandomGuessing()
 
-    MAE_P0 = randomGuessing['MAE_P0_mean']
+    MAE_P0 = randomGuessing['MAE_P0']
     SA = 1 - (MAE / MAE_P0)
 
-    StDev_P0 = statistics.stdev(randomGuessing['MAE_P0_samples'])
+
+    StDev_P0 = statistics.stdev(randomGuessing['estEffortP0s'])
     ES = (MAE_P0 - MAE) / StDev_P0 if StDev_P0 > 0 else float('inf')
 
     # Hitung MBRE/MIBRE
@@ -291,11 +312,11 @@ if __name__ == '__main__':
     MBRE = sum(mbre(a, e) for a, e in zip(actualEfforts, estEfforts)) / len(actualEfforts)
     MIBRE = sum(mibre(a, e) for a, e in zip(actualEfforts, estEfforts)) / len(actualEfforts)
 
-    print({
-        'MAE_GA+ACOinit': MAE,
-        'SA': SA,
-        'ES': ES,
-        'MBRE': MBRE,
-        'MIBRE': MIBRE,
-        'MAE_P0': MAE_P0
-    })
+    # print({
+    #     'MAE_GA+ACOinit': MAE,
+    #     'SA': SA,
+    #     'ES': ES,
+    #     'MBRE': MBRE,
+    #     'MIBRE': MIBRE,
+    #     'MAE_P0': MAE_P0
+    # })

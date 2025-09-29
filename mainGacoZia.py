@@ -1,22 +1,22 @@
-import sys
+# gaco_init_maxwell.py
 import math
 import random
-import statistics
-import datasetZia as dataset
-import ffdfZia as prameters
+import statistics   
+import parameter as pr          # berisi parameterFfDf.parameter (22 dim: 7 FF + 15 DF)
 import random_guessing as rg
+import sys
+import bisect
+import datasetZia as dataset
 
-class HybridGACO:
+class HybridGA_InitACO_Maxwell:
     """
-    GA + ACO:
-    - GA backbone: roulette minimization, elitism, single-point crossover, gaussian mutation (clamped), early-stopping
-    - ACO layer:
-        * tau_parent[i]   : feromon untuk kecenderungan memilih kromosom-i sebagai parent
-        * tau_cut[k]      : feromon untuk kecenderungan memilih cut-point k
-      Seleksi parent & cut-point memakai ACS: eksploitasi (argmax) vs eksplorasi (roulette) dengan bobot pheromone^alpha * heuristic^beta
+    Hybrid GA dengan ACO untuk INISIALISASI populasi awal.
+    - Tahap awal: populasi dibangkitkan dengan ACO (guidance feromon + heuristik).
+    - Tahap evolusi: murni GA (elitism, crossover, gaussian mutation, early-stopping).
+    Evaluasi: AE per proyek → MAE keseluruhan.
     """
     def __init__(self, parameterSetting):
-        # --- GA params ---
+        # --- GA ---
         self.popsize         = parameterSetting['popsize']
         self.crossoverRate   = parameterSetting['crossoverRate']
         self.numOfDimension  = parameterSetting['numOfDimension']
@@ -27,61 +27,69 @@ class HybridGACO:
         self.patience        = parameterSetting.get('patience', 10)
         self.elite_k         = parameterSetting.get('elite_k', 1)
         self.mutationSigma   = parameterSetting.get('mutationSigma', 0.05)
-        self.random_seed     = parameterSetting.get('seed', None)
+        self.seed            = parameterSetting.get('seed', None)
 
-        # --- ACO params ---
-        self.rho      = parameterSetting.get('rho', 0.1)        # evaporasi
-        self.alpha    = parameterSetting.get('alpha', 1.0)      # bobot pheromone
-        self.beta     = parameterSetting.get('beta', 2.0)       # bobot heuristic
-        self.q0       = parameterSetting.get('q0', 0.5)         # eksploitasi vs eksplorasi
-        self.tau_init = parameterSetting.get('tau_init', 1.0)   # feromon awal
+        # --- ACO untuk inisialisasi ---
+        self.rho      = parameterSetting.get('rho', 0.1)
+        self.alpha    = parameterSetting.get('alpha', 1.0)
+        self.beta     = parameterSetting.get('beta', 2.0)
+        self.q0       = parameterSetting.get('q0', 0.5)
+        self.tau_init = parameterSetting.get('tau_init', 1.0)
         self.tau_min  = parameterSetting.get('tau_min', 1e-6)
         self.tau_max  = parameterSetting.get('tau_max', 100.0)
 
-        if self.random_seed is not None:
-            random.seed(self.random_seed)
+        # --- Mapping kolom Maxwell (bisa override via parameterSetting) ---
+        self.vi_idx     = parameterSetting.get('vi_idx', 7)
+        self.actual_idx = parameterSetting.get('actual_idx', 2)
+        self.effort_idx = parameterSetting.get('effort_idx', 0)
 
-    # -------------------- UTIL GA --------------------
-    def initialPopulasi(self):
+        if self.seed is not None:
+            random.seed(self.seed)
+
+    # =============== Util dasar GA ===============
+    def _initial_chromosome(self):
         return [random.uniform(lb, ub) for (lb, ub) in self.ranges]
 
-    def getDeceleration_ln(self, chromosome):
+    def _lnD(self, chromosome):
         s = 0.0
         for g in chromosome:
             g = max(g, 1e-12)
             s += math.log(g)
-        return s  # = ln(D) dengan D = FR*DF
+        return s
 
-    def calcAE(self, lnD, vi, effort, actualEffort):
+    def _calc_AE(self, lnD, vi, effort, actualEffort):
         if vi <= 0:
             return 1e18, 0.0
-        # lnV = D*ln(vi) = exp(lnD)*ln(vi)
-        lnV = math.exp(lnD) * math.log(vi)
+        lnD_clamped = max(min(lnD, 50.0), -50.0)
+        D = math.exp(lnD_clamped)
+        lnV = D * math.log(vi)
         estEffort = effort * math.exp(-lnV)
-        return abs(actualEffort - estEffort), estEffort
+        AE = abs(actualEffort - estEffort)
+        return AE, estEffort
+
+    def _evaluate(self, population, vi, effort, actual):
+        scored = []
+        for ch in population:
+            lnD = self._lnD(ch)
+            ae, est = self._calc_AE(lnD, vi, effort, actual)
+            scored.append((ae, ch, est))
+        scored.sort(key=lambda x: x[0])
+        return scored
 
     def _fitness_from_AEs(self, AEs):
         fit = [1.0/(1.0 + ae) for ae in AEs]
         s = sum(fit)
-        return [f/s if s>0 else 1.0/len(AEs) for f in fit]
+        return [f/s if s > 0 else 1.0/len(fit) for f in fit]
 
     def _roulette(self, weights, k):
-        # weights assumed normalized (sum ~ 1)
         import bisect
-        cum = [0.0]
-        c = 0.0
+        cum = [0.0]; c = 0.0
         for w in weights:
-            c += w
-            cum.append(c)
+            c += w; cum.append(c)
         if cum[-1] == 0.0:
-            # fallback uniform
             n = len(weights)
-            weights = [1.0/n]*n
-            cum = [0.0]
-            c = 0.0
-            for w in weights:
-                c += w
-                cum.append(c)
+            weights = [1.0/n]*n; cum=[0.0]; c=0.0
+            for w in weights: c+=w; cum.append(c)
         cum[-1] = 1.0
         idxs = []
         for _ in range(k):
@@ -97,244 +105,219 @@ class HybridGACO:
         return [(idxs[i], idxs[i+1]) for i in range(0, len(idxs)-1, 2)]
 
     def _single_point_crossover(self, p1, p2, cut):
-        if self.numOfDimension == 1:
-            return p1[:], p2[:]
+        cut = max(0, min(cut, self.numOfDimension - 2))
         c1 = p1[:cut+1] + p2[cut+1:]
         c2 = p2[:cut+1] + p1[cut+1:]
         return c1, c2
 
-    def _mutate_gene(self, val, low, high, sigma):
-        nv = val + random.gauss(0.0, sigma*(high - low))
-        return min(max(nv, low), high)
-
-    def _mutate(self, chrom):
-        for g in range(self.numOfDimension):
+    def _mutate(self, ch):
+        for i in range(self.numOfDimension):
             if random.random() < self.mutationRate:
-                lb, ub = self.ranges[g]
-                chrom[g] = self._mutate_gene(chrom[g], lb, ub, self.mutationSigma)
-        return chrom
+                lb, ub = self.ranges[i]
+                step = self.mutationSigma * (ub - lb)
+                ch[i] = max(lb, min(ub, ch[i] + random.gauss(0.0, step)))
+        return ch
 
-    # -------------------- ACO: util & update --------------------
-    def _aco_weights(self, tau, heuristic):
-        # w_i ∝ (tau_i^alpha) * (heuristic_i^beta); normalisasi ke distribusi
-        vals = []
-        for t, h in zip(tau, heuristic):
-            v = (max(t, self.tau_min) ** self.alpha) * (max(h, 1e-12) ** self.beta)
-            vals.append(v)
-        s = sum(vals)
-        if s == 0:
-            n = len(vals)
-            return [1.0/n]*n
-        return [v/s for v in vals]
+    # =============== ACO hanya untuk inisialisasi ===============
+    def _aco_initialize_population(self, vi, effort, actual, n_ants=30, n_iters=10, bins=10):
+        
+        edges, centers = [], []
+        for (lb, ub) in self.ranges:
+            step = (ub - lb) / bins
+            e = [lb + i*step for i in range(bins+1)]
+            c = [0.5*(e[i]+e[i+1]) for i in range(bins)]
+            edges.append(e); centers.append(c)
+        tau = [[self.tau_init]*bins for _ in range(self.numOfDimension)]
 
-    def _acs_choice(self, tau, heuristic):
-        # ACS: dengan peluang q0 → pilih argmax; selain itu → roulette
-        if random.random() < self.q0:
-            # exploit
-            scores = [(max(t, self.tau_min) ** self.alpha) * (max(h,1e-12) ** self.beta)
-                      for t, h in zip(tau, heuristic)]
-            return max(range(len(scores)), key=lambda i: scores[i])
-        else:
-            # explore
-            weights = self._aco_weights(tau, heuristic)
-            return self._roulette(weights, 1)[0]
+        pool = []
+        for _ in range(n_iters):
+            cands = []
+            for _a in range(n_ants):
+                ch = []
+                for d in range(self.numOfDimension):
+                    heuristic = [1.0/bins]*bins
+                    if random.random() < self.q0:
+                        scores = [max(tau[d][b], self.tau_min) ** self.alpha *
+                                  max(heuristic[b], 1e-12) ** self.beta for b in range(bins)]
+                        b_idx = max(range(bins), key=lambda i: scores[i])
+                    else:
+                        scores = [max(tau[d][b], self.tau_min) ** self.alpha *
+                                  max(heuristic[b], 1e-12) ** self.beta for b in range(bins)]
+                        s = sum(scores) or 1.0
+                        r = random.random(); acc = 0.0; b_idx = 0
+                        for i, sc in enumerate(scores):
+                            acc += sc/s
+                            if r <= acc: b_idx = i; break
+                    ch.append(centers[d][b_idx])
+                lnD = self._lnD(ch)
+                ae, est = self._calc_AE(lnD, vi, effort, actual)
+                cands.append((ae, ch, est))
+            for d in range(self.numOfDimension):
+                for b in range(bins):
+                    tau[d][b] = max(self.tau_min, (1.0 - self.rho) * tau[d][b])
+            cands.sort(key=lambda x: x[0])
+            best_ae, best_ch, _ = cands[0]
+            delta = 1.0/(1.0 + best_ae)
+            for d, val in enumerate(best_ch):
+                e = edges[d]
+                b_idx = min(len(e)-2, max(0, bisect.bisect_right(e, val)-1))
+                tau[d][b_idx] = min(self.tau_max, tau[d][b_idx] + delta)
+            pool.extend(cands)
 
-    def _evaporate_all(self, arr):
-        for i in range(len(arr)):
-            arr[i] = max(self.tau_min, (1.0 - self.rho) * arr[i])
+        pool.sort(key=lambda x: x[0])
+        init_pop = [ch for _, ch, _ in pool[:self.popsize]]
+        while len(init_pop) < self.popsize:
+            init_pop.append(self._initial_chromosome())
+        return init_pop
 
-    def _deposit(self, arr, idx, delta):
-        arr[idx] = min(self.tau_max, arr[idx] + delta)
+    # =============== MAIN LOOP ===============
+    def run(self):
+        row = dt.CetakDataset.maxwelDataset()
+        rows =   dataset.CetakDataset.ziauddinDataset()
+        ae_results = []
+        est_results = []
+        actual_results = []
 
-    # -------------------- LOOP UTAMA GACO --------------------
-    def mainAlgen(self):
-        datas = dataset.CetakDataset.ziauddinDataset()  # [effort, vi, ..., actualEffort]
-        aeBestChromosomes = []
-        estEffortBestChromosomes = []
+        for row in rows:
+            vi     = row[self.vi_idx]
+            actual = row[self.actual_idx]
+            effort = row[self.effort_idx]
 
-        for data in datas:
-            effort, vi, actEffort = data[0], data[1], data[8]
-
-            # init populasi
-            chromosomes = [self.initialPopulasi() for _ in range(self.popsize)]
-            # init feromon ACO
-            tau_parent = [self.tau_init] * self.popsize          # per-kromosom
-            tau_cut    = [self.tau_init] * self.numOfDimension   # per posisi cut
-
-            # evaluasi awal
-            scored = []
-            for ch in chromosomes:
-                lnD = self.getDeceleration_ln(ch)
-                AE, est = self.calcAE(lnD, vi, effort, actEffort)
-                scored.append((AE, ch, est))
-            scored.sort(key=lambda x: x[0])
-
+            # populasi awal pakai ACO
+            population = self._aco_initialize_population(vi, effort, actual,
+                                                         n_ants=30, n_iters=10, bins=10)
+            scored = self._evaluate(population, vi, effort, actual)
             best_AE, best_ch, best_est = scored[0]
             no_improve = 0
 
-            # heuristik awal (untuk parent: berdasarkan fitness; untuk cut: pakai 1/numDim)
-            AEs = [ae for ae, _, _ in scored]
-            parent_heur = self._fitness_from_AEs(AEs)  # semakin tinggi → semakin dipilih
-            cut_heur    = [1.0/self.numOfDimension]*self.numOfDimension
-
             for gen in range(self.maxIter):
-                # --- elitism ---
                 elites = [scored[i][1][:] for i in range(min(self.elite_k, len(scored)))]
-
-                # --- ACO: pilih parent terarah pheromone+heuristik ---
-                # kita pilih 2*floor(popsize/2) parent (dipasangkan 2-2)
-                pair_count = (self.popsize // 2) * 2
-                parent_idxs = []
-                for _ in range(pair_count):
-                    # choice via ACS memakai tau_parent & parent_heur
-                    idx = self._acs_choice(tau_parent, parent_heur)
-                    parent_idxs.append(idx)
+                AEs = [ae for ae, _, _ in scored]
+                fitness = self._fitness_from_AEs(AEs)
+                parent_idxs = self._roulette(fitness, (self.popsize // 2) * 2)
                 pairs = self._make_pairs(parent_idxs)
 
-                # --- Reproduksi ---
                 offspring = []
                 for i, j in pairs:
-                    p1 = chromosomes[i][:]
-                    p2 = chromosomes[j][:]
-
-                    # Probabilitas crossover global
+                    p1 = population[i][:]
+                    p2 = population[j][:]
                     if random.random() < self.crossoverRate:
-                        # ACO: pilih cut-point via ACS menggunakan tau_cut & cut_heur
-                        cut = self._acs_choice(tau_cut, cut_heur)
+                        cut = random.randint(0, self.numOfDimension-2)
                         c1, c2 = self._single_point_crossover(p1, p2, cut)
                     else:
-                        # tanpa crossover, keturunan = copy orang tua
                         c1, c2 = p1[:], p2[:]
-
-                    # mutasi halus
                     offspring.append(self._mutate(c1))
                     offspring.append(self._mutate(c2))
 
-                # --- Seleksi generasi berikutnya ---
-                pool = chromosomes + offspring
-                scored_pool = []
-                for ch in pool:
-                    lnD = self.getDeceleration_ln(ch)
-                    AE, est = self.calcAE(lnD, vi, effort, actEffort)
-                    scored_pool.append((AE, ch, est))
-                scored_pool.sort(key=lambda x: x[0])
-
-                # rebuild populasi: elit dulu, lalu terbaik dari pool
-                new_pop = []
-                for e in elites:
-                    new_pop.append(e[:])
+                pool = population + offspring
+                scored_pool = self._evaluate(pool, vi, effort, actual)
+                new_pop = elites[:]
                 for _, ch, _ in scored_pool:
                     if len(new_pop) >= self.popsize:
                         break
                     new_pop.append(ch[:])
-                chromosomes = new_pop
 
-                # evaluasi populasi baru
-                scored = []
-                for ch in chromosomes:
-                    lnD = self.getDeceleration_ln(ch)
-                    AE, est = self.calcAE(lnD, vi, effort, actEffort)
-                    scored.append((AE, ch, est))
-                scored.sort(key=lambda x: x[0])
+                population = new_pop
+                scored = self._evaluate(population, vi, effort, actual)
 
-                # track best + early stopping
                 if scored[0][0] + 1e-12 < best_AE:
                     best_AE, best_ch, best_est = scored[0]
                     no_improve = 0
                 else:
                     no_improve += 1
-
+                if best_AE <= self.stoppingFitness or no_improve >= self.patience:
+                    break
+            # print("Best AE:", best_AE, "estEffort:", best_est, "actualEffort:", actual)   
+            for gen in range(self.maxIter):
+                ...
                 if best_AE <= self.stoppingFitness or no_improve >= self.patience:
                     break
 
-                # --- Update heuristik parent utk generasi berikutnya (berdasarkan AEs terbaru) ---
-                AEs = [ae for ae, _, _ in scored]
-                parent_heur = self._fitness_from_AEs(AEs)
+            # <-- keluar dari loop gen
+            print(best_est)  
 
-                # --- ACO: evaporasi global ---
-                self._evaporate_all(tau_parent)
-                self._evaporate_all(tau_cut)
+            ae_results.append(best_AE)
+            est_results.append(best_est)
+            actual_results.append(actual)
 
-                # --- ACO: deposit pheromone dari solusi terbaik generasi ini ---
-                # Perkiraan sederhana kontribusi: delta ~ 1/(1+best_AE)
-                delta = 1.0/(1.0 + best_AE)
+       
+            # print('value ae result : ', ae_results, 'est results : ', est_results, 'actual effort : ', actual_results)
+            # sys.exit()
 
-                # Deposit pada parent yang "baik": ambil top-2 individu (seolah parent terbaik)
-                # Catatan: tanpa menyimpan pasangan terbaik real, pendekatan ini cukup efektif
-                top2 = [scored[0][1], scored[1][1]] if len(scored) > 1 else [scored[0][1], scored[0][1]]
-                # temukan index mereka di populasi saat ini
-                idx_map = {id(chromosomes[i]): i for i in range(len(chromosomes))}
-                for t in top2:
-                    i = idx_map.get(id(t), None)
-                    if i is not None:
-                        self._deposit(tau_parent, i, delta)
-
-                # Deposit pada cut-point yang “baik”: perkirakan cut yang memisah gen mayoritas elit
-                # (heuristik ringan; jika ingin lebih akurat, simpan cut terpakai saat melahirkan anak terbaik)
-                if self.numOfDimension > 1:
-                    # pilih cut dengan index tengah sebagai fallback (bisa juga pilih acak berbobot tau_cut)
-                    cut_idx = self._acs_choice(tau_cut, cut_heur)
-                    self._deposit(tau_cut, cut_idx, delta)
-
-            # simpan hasil per proyek
-            aeBestChromosomes.append(best_AE)
-            estEffortBestChromosomes.append(best_est)
-
-        sizeDataset = len(aeBestChromosomes)
-        MAE = sum(aeBestChromosomes)/sizeDataset if sizeDataset > 0 else float('inf')
-        return {'MAE': MAE, 'AEs': aeBestChromosomes, 'estEfforts': estEffortBestChromosomes}
+        MAE = sum(ae_results)/len(ae_results) if ae_results else float('inf')
+        return {'MAE': MAE, 'AEs': ae_results, 'estEfforts': est_results, 'actualEfforts': actual_results}
 
 
-# -------------------- PARAMETER & EVALUASI --------------------
-ranges = prameters.prameterFfDf.parameter
+# ========================= PARAMETER & RUN =========================
+if __name__ == '__main__':
+    ranges = pr.prameterFfDf.parameter   # 22 rentang (7 FF + 15 DF)
 
-parameterSetting = {
-    # GA
-    "popsize": 40,
-    "crossoverRate": 0.25,
-    "numOfDimension": 13,
-    "mutationRate": 0.05,      # lebih halus dari 1/13
-    "ranges": ranges,
-    "maxIter": 60,
-    "stoppingFitness": 0.03,
-    "patience": 10,
-    "elite_k": 1,
-    "mutationSigma": 0.05,
-    "seed": 42,
+    parameterSetting = {
+        # GA
+        "popsize": 40,
+        "crossoverRate": 0.7,
+        "numOfDimension": len(ranges),
+        "mutationRate": 0.05,
+        "ranges": ranges,
+        "maxIter": 60,
+        "stoppingFitness": 0.03,
+        "patience": 10,
+        "elite_k": 1,
+        "mutationSigma": 0.05,
+        "seed": 42,
 
-    # ACO
-    "rho": 0.1,         # evaporasi
-    "alpha": 1.0,       # bobot pheromone
-    "beta": 2.0,        # bobot heuristic (fitness)
-    "q0": 0.5,          # eksploitasi vs eksplorasi
-    "tau_init": 1.0,    # feromon awal
-    "tau_min": 1e-6,
-    "tau_max": 100.0
-}
+        # ACO init
+        "rho": 0.1,
+        "alpha": 1.0,
+        "beta": 2.0,
+        "q0": 0.5,
+        "tau_init": 1.0,
+        "tau_min": 1e-6,
+        "tau_max": 100.0,
 
-if __name__ == "__main__":
-    gaco = HybridGACO(parameterSetting)
-    hasil = gaco.mainAlgen()
-    print('GACO result : ', hasil)
+        # Mapping kolom dataset maxwel
+        "vi_idx": 0,
+        "actual_idx": 2,
+        "effort_idx": 4,
 
-    # Baseline Random Guessing (tetap sama seperti versi Anda)
-    MAE = hasil['MAE']
-    estEfforts = hasil['estEfforts']
+        # Mapping kolom dataset zia
+        "vi_idxs": 0,
+        "actual_idxs": 2,
+        "effort_idxs": 4,
+    }
+
+    gaco = HybridGA_InitACO_Maxwell(parameterSetting)
+    result = gaco.run()
+    # print('Hybrid Init-ACO GA (Maxwell):', result)
+    # sys.exit()
+
+    # ==== Evaluasi baseline (contoh random guessing) ====
+    MAE = result['MAE']
+    estEfforts = result['estEfforts']
+    actualEfforts = result['actualEfforts']
+
     runs = 1000
-    run = rg.RandomGuessing(estEfforts, runs)
+    run = rg.RandomGuessing(actualEfforts, runs)
     randomGuessing = run.mainRandomGuessing()
 
     MAE_P0 = randomGuessing['MAE_P0']
-    estEffortP0s = randomGuessing['estEffortP0s']
-    SA_P0 = 1 - (MAE / MAE_P0)
-    StDev_P0 = statistics.stdev(estEffortP0s)
-    ES = abs((MAE - MAE_P0) / StDev_P0) if StDev_P0 > 0 else float('inf')
+    SA = 1 - (MAE / MAE_P0)
 
-    for i in range(len(estEfforts)):
-        minEstimated = min(estEfforts[i], estEffortP0s[i])
-        maxEstimated = max(estEfforts[i], estEffortP0s[i])
-        AE = abs(estEfforts[i] - estEffortP0s[i])
-        aeMinEstimated = AE / (minEstimated if minEstimated != 0 else 1e-12)
-        aeMaxEstimated = AE / (maxEstimated if maxEstimated != 0 else 1e-12)
-        print('AE', AE, 'MAE_P0', MAE_P0, 'SA_P0', SA_P0, 'STDEV_P0', StDev_P0,
-              'ES', ES, 'AE_MIN_EST', aeMinEstimated, 'AE_MAX_EST', aeMaxEstimated)
+
+    StDev_P0 = statistics.stdev(randomGuessing['estEffortP0s'])
+    ES = (MAE_P0 - MAE) / StDev_P0 if StDev_P0 > 0 else float('inf')
+
+    # Hitung MBRE/MIBRE
+    def mbre(y, yhat): return abs(y - yhat) / (min(y, yhat) if min(y, yhat) != 0 else 1e-12)
+    def mibre(y, yhat): return abs(y - yhat) / (max(y, yhat) if max(y, yhat) != 0 else 1e-12)
+    MBRE = sum(mbre(a, e) for a, e in zip(actualEfforts, estEfforts)) / len(actualEfforts)
+    MIBRE = sum(mibre(a, e) for a, e in zip(actualEfforts, estEfforts)) / len(actualEfforts)
+
+    # print({
+    #     'MAE_GA+ACOinit': MAE,
+    #     'SA': SA,
+    #     'ES': ES,
+    #     'MBRE': MBRE,
+    #     'MIBRE': MIBRE,
+    #     'MAE_P0': MAE_P0
+    # })
