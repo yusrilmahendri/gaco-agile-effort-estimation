@@ -1,8 +1,8 @@
 import sys
 import random
 import statistics
-import parameter as pr 
-import datasetMaxwel as dt
+import datasetZia as dataset
+import ffdfZia as prameters
 import random_guessing as rg
 
 
@@ -28,9 +28,10 @@ class AlgoritmaGenetika:
 
     def getDeceleration(self, chromosome):
         ''' DECELERATION '''
-        hasilFf = chromosome[0] * chromosome[1] * chromosome[2] * chromosome[3] * chromosome[4] * chromosome[5] * chromosome[6] * chromosome[7] 
-        hasilDf = chromosome[8] * chromosome[9] * chromosome[10] * \
-            chromosome[11] * chromosome[12] * chromosome[13]* chromosome[14]* chromosome[15]* chromosome[16]* chromosome[17]* chromosome[18]* chromosome[19]* chromosome[20] * chromosome[21] 
+        hasilFf = chromosome[0] * chromosome[1] * chromosome[2] * chromosome[3]
+        hasilDf = chromosome[4] * chromosome[5] * chromosome[6] * chromosome[7] * \
+            chromosome[8] * chromosome[9] * chromosome[10] * \
+            chromosome[11] * chromosome[12]
         return hasilFf * hasilDf
 
     def calcAE(self, hasilDeceleration, vi, effort, actualEffort):
@@ -94,28 +95,25 @@ class AlgoritmaGenetika:
         parentCandidatesIndex = []
 
         ''' INITIAL POPULASI AWAL '''
-        # dataset
+        # Ziauddin dataset
         # ================
-        datas = dt.CetakDataset.maxwelDataset()
+        datas = dataset.CetakDataset.ziauddinDataset()
         iter = -1
         aeBestChromosomes = []
         estEffortBestChromosomes = []
-        # loop dataset  ke-0....ke-...
+        # loop dataset Ziauddin ke-0....ke-20
         # ===================================
         for data in datas:
-            iter +=1
-            # print("Dataset ke-", iter + 1)
             for longPopsize in range(self.popsize):
                 chromosome = AlgoritmaGenetika.initialPopulasi(self)
                 chromosomes.append(chromosome)
                 deceleration = self.getDeceleration(chromosome)
-                vi = data[0]
-                actEffort = data[2]
-                effort = data[4]
+                vi = data[1]
+                actEffort = data[8]
+                effort = data[0]
                 AE = self.calcAE(deceleration, vi, effort, actEffort)
                 AEs.append(AE)
                 chromosome = []
-
 
             ''' Seleksi chromosomes '''
             candidateNewChromosomes = self.selectRoletteWheelChromosome(
@@ -160,7 +158,7 @@ class AlgoritmaGenetika:
                 for sortedParentIndex in sortedParentIndexes:
                     if sortedParentIndex not in finalParentIndexes:
                         finalParentIndexes.append(sortedParentIndex)
-              
+
                 ''' Create Offsets '''
                 tempOffsets = []
                 offsets = []
@@ -240,39 +238,35 @@ class AlgoritmaGenetika:
                     results.append([AE, chromosome, estEffort])
                 bestChromosome = min(results)
                 bestChromosomes.append(bestChromosome)
-                
+                # print(bestChromosomes[2])
                 # process a will stop if value chromosome terpenuhi with values stopingFitness
                 # ============================================================================
                 if bestChromosome[0] <= self.stoppingFitness:
                     break
                 results = []
             bestChromosomes = min(bestChromosomes)
-            # print("Best Chromosome:", bestChromosomes[1], "AE:", bestChromosomes[0], "estEffort:", bestChromosomes[2])
-            # sys.exit()
             aeBestChromosomes.append(bestChromosomes[0])
-            # print(f"{bestChromosomes[2]:.12f}".replace('.', ','))
             estEffortBestChromosomes.append(bestChromosomes[2])
+            # print(estEffortBestChromosomes)
+                # print('data ke-', iter, 'est Effort : ', est)
         # process a count sum of the best chromosomes every datasets based on value AEs(value Objektif)
         # =============================================================================================
         sizeDataset = len(datas)
         averageBestChromosome = sum(aeBestChromosomes) / sizeDataset
-        # print(f"{averageBestChromosome:.12f}".replace('.', ','))
-        # for estEffort in estEffortBestChromosomes:
-        #     print(f"{estEffort:.12f}".replace('.', ','))
         return {'MAE': averageBestChromosome, 'AEs': aeBestChromosomes, 'estEfforts': estEffortBestChromosomes}
 
 
 # data, values rentang variabel design in prameter friction and dynamic factors
 # =====================================================================
-ranges = pr.prameterFfDf.parameter
+ranges = prameters.prameterFfDf.parameter
 
 # prameter setting
 # ================
 parameterSetting = {
     "popsize": 40,            # size populasi
     "crossoverRate": 0.25,
-    "numOfDimension": len(ranges),    # long kromosome from prameter friction and dynamic factors
-    "mutationRate": 1 / len(ranges),  # 1 / long kromosome
+    "numOfDimension": len(ranges),   # long kromosome from prameter friction and dynamic factors
+    "mutationRate": 1 / 13,  # 1 / long kromosome
     "ranges": ranges,        # rentang variabel desain lowBound and UpperBound
     "maxIter": 60,           # Loop sebanyak value maxIter
     "stoppingFitness": 0.03
@@ -282,11 +276,6 @@ algen = AlgoritmaGenetika(parameterSetting)
 hasil = algen.mainAlgen()
 MAE = hasil['MAE']
 estEfforts = hasil['estEfforts']
-AE = hasil['AEs']
-# print("MAE:", MAE)
-# print("AEs:", AE)
-# print('result estimasi : ', hasil)
-
 # Evaluasi
 # ========
 runs = 1000

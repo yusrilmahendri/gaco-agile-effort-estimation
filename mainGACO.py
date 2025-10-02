@@ -233,18 +233,19 @@ class HybridGA_InitACO_Maxwell:
                     break
 
             # <-- keluar dari loop gen
-            print(best_est)  
+            # print(best_est)  
 
             ae_results.append(best_AE)
             est_results.append(best_est)
             actual_results.append(actual)
-
-       
-            # print('value ae result : ', ae_results, 'est results : ', est_results, 'actual effort : ', actual_results)
+            # print(est_results)
             # sys.exit()
+       
+            print('best chr : ', best_est, 'value ae result : ', ae_results, 'est results : ', est_results, 'actual effort : ', actual_results)
+            sys.exit()
 
         MAE = sum(ae_results)/len(ae_results) if ae_results else float('inf')
-        return {'MAE': MAE, 'AEs': ae_results, 'estEfforts': est_results, 'actualEfforts': actual_results}
+        return { 'MAE': MAE,  'AEs': ae_results, 'estEfforts': est_results, 'actualEfforts': actual_results}
 
 
 # ========================= PARAMETER & RUN =========================
@@ -293,6 +294,8 @@ if __name__ == '__main__':
     # ==== Evaluasi baseline (contoh random guessing) ====
     MAE = result['MAE']
     estEfforts = result['estEfforts']
+    # print('est efforts : ', estEfforts)
+    # sys.exit()
     actualEfforts = result['actualEfforts']
 
     runs = 1000

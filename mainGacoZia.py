@@ -1,12 +1,12 @@
 # gaco_init_maxwell.py
 import math
 import random
-import statistics   
-import parameter as pr          # berisi parameterFfDf.parameter (22 dim: 7 FF + 15 DF)
+import statistics
+import datasetZia as dt      # pastikan modulmu sesuai
+import ffdfZia as pr          # berisi parameterFfDf.parameter (22 dim: 7 FF + 15 DF)
 import random_guessing as rg
 import sys
 import bisect
-import datasetZia as dataset
 
 class HybridGA_InitACO_Maxwell:
     """
@@ -39,8 +39,8 @@ class HybridGA_InitACO_Maxwell:
         self.tau_max  = parameterSetting.get('tau_max', 100.0)
 
         # --- Mapping kolom Maxwell (bisa override via parameterSetting) ---
-        self.vi_idx     = parameterSetting.get('vi_idx', 7)
-        self.actual_idx = parameterSetting.get('actual_idx', 2)
+        self.vi_idx     = parameterSetting.get('vi_idx', 1)
+        self.actual_idx = parameterSetting.get('actual_idx', 7)
         self.effort_idx = parameterSetting.get('effort_idx', 0)
 
         if self.seed is not None:
@@ -172,17 +172,20 @@ class HybridGA_InitACO_Maxwell:
 
     # =============== MAIN LOOP ===============
     def run(self):
-        row = dt.CetakDataset.maxwelDataset()
-        rows =   dataset.CetakDataset.ziauddinDataset()
+        rows = dt.CetakDataset.ziauddinDataset()
         ae_results = []
         est_results = []
         actual_results = []
 
         for row in rows:
+            # print(row)
             vi     = row[self.vi_idx]
             actual = row[self.actual_idx]
             effort = row[self.effort_idx]
-
+            # print(effort)
+            # print('vi:', vi, 'actual : ', actual, 'effort', effort)
+            # sys.exit()
+     
             # populasi awal pakai ACO
             population = self._aco_initialize_population(vi, effort, actual,
                                                          n_ants=30, n_iters=10, bins=10)
@@ -234,30 +237,32 @@ class HybridGA_InitACO_Maxwell:
                     break
 
             # <-- keluar dari loop gen
-            print(best_est)  
+            # print(best_est)  
 
             ae_results.append(best_AE)
             est_results.append(best_est)
             actual_results.append(actual)
-
+            print(est_results)
+            # sys.exit()
        
-            # print('value ae result : ', ae_results, 'est results : ', est_results, 'actual effort : ', actual_results)
+            # print(est_results)
             # sys.exit()
 
         MAE = sum(ae_results)/len(ae_results) if ae_results else float('inf')
-        return {'MAE': MAE, 'AEs': ae_results, 'estEfforts': est_results, 'actualEfforts': actual_results}
+        return { 'MAE': MAE,  'AEs': ae_results, 'estEfforts': est_results, 'actualEfforts': actual_results}
 
 
 # ========================= PARAMETER & RUN =========================
 if __name__ == '__main__':
-    ranges = pr.prameterFfDf.parameter   # 22 rentang (7 FF + 15 DF)
+    ranges = pr.prameterFfDf.parameter   
+    # print('ranges : ', ranges)
 
     parameterSetting = {
         # GA
         "popsize": 40,
-        "crossoverRate": 0.7,
+        "crossoverRate": 0.25,
         "numOfDimension": len(ranges),
-        "mutationRate": 0.05,
+        "mutationRate": 1 / 13,
         "ranges": ranges,
         "maxIter": 60,
         "stoppingFitness": 0.03,
@@ -275,15 +280,10 @@ if __name__ == '__main__':
         "tau_min": 1e-6,
         "tau_max": 100.0,
 
-        # Mapping kolom dataset maxwel
-        "vi_idx": 0,
-        "actual_idx": 2,
-        "effort_idx": 4,
-
-        # Mapping kolom dataset zia
-        "vi_idxs": 0,
-        "actual_idxs": 2,
-        "effort_idxs": 4,
+        # Mapping kolom dataset
+        "vi_idx": 1,
+        "actual_idx": 7,
+        "effort_idx": 0,
     }
 
     gaco = HybridGA_InitACO_Maxwell(parameterSetting)
@@ -294,6 +294,8 @@ if __name__ == '__main__':
     # ==== Evaluasi baseline (contoh random guessing) ====
     MAE = result['MAE']
     estEfforts = result['estEfforts']
+    # print('est efforts : ', estEfforts)
+    # sys.exit()
     actualEfforts = result['actualEfforts']
 
     runs = 1000

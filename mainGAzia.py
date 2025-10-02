@@ -2,8 +2,11 @@ import sys
 import random
 import statistics
 import datasetZia as dataset
-import ffdfZia as prameters
+import parameter as prameters
+# import ffdfZia as prameters
+# import parameter as pr 
 import random_guessing as rg
+import datasetMaxwel as dt  
 
 
 class AlgoritmaGenetika:
@@ -27,12 +30,20 @@ class AlgoritmaGenetika:
         return chromosome
 
     def getDeceleration(self, chromosome):
-        ''' DECELERATION '''
-        hasilFf = chromosome[0] * chromosome[1] * chromosome[2] * chromosome[3]
-        hasilDf = chromosome[4] * chromosome[5] * chromosome[6] * chromosome[7] * \
-            chromosome[8] * chromosome[9] * chromosome[10] * \
-            chromosome[11] * chromosome[12]
+        """Hitung Deceleration: FF (6 param) × DF (16 param)"""
+        hasilFf = 1
+        hasilDf = 1
+
+        # 6 parameter pertama → FF
+        for g in chromosome[:6]:
+            hasilFf *= g
+
+        # 16 parameter berikutnya → DF
+        for g in chromosome[6:]:
+            hasilDf *= g
+
         return hasilFf * hasilDf
+
 
     def calcAE(self, hasilDeceleration, vi, effort, actualEffort):
         ''' VALUE AE '''
@@ -97,7 +108,7 @@ class AlgoritmaGenetika:
         ''' INITIAL POPULASI AWAL '''
         # Ziauddin dataset
         # ================
-        datas = dataset.CetakDataset.ziauddinDataset()
+        datas = dt.CetakDataset.maxwelDataset()
         iter = -1
         aeBestChromosomes = []
         estEffortBestChromosomes = []
@@ -105,17 +116,19 @@ class AlgoritmaGenetika:
         # ===================================
         for data in datas:
             iter +=1
+            # print('Iterasi dataset ke-', iter)
+   
             for longPopsize in range(self.popsize):
                 chromosome = AlgoritmaGenetika.initialPopulasi(self)
                 chromosomes.append(chromosome)
                 deceleration = self.getDeceleration(chromosome)
-                vi = data[1]
-                actEffort = data[8]
-                effort = data[0]
+                vi = data[0]
+                actEffort = data[2]
+                effort = data[4]
                 AE = self.calcAE(deceleration, vi, effort, actEffort)
                 AEs.append(AE)
                 chromosome = []
-
+ 
             ''' Seleksi chromosomes '''
             candidateNewChromosomes = self.selectRoletteWheelChromosome(
                 AEs, chromosomes)
@@ -245,15 +258,18 @@ class AlgoritmaGenetika:
                     break
                 results = []
             bestChromosomes = min(bestChromosomes)
-            print("Best Chromosome:", bestChromosomes[1], "AE:", bestChromosomes[0], "estEffort:", bestChromosomes[2])
-            # sys.exit()
+            # print(bestChromosomes[2])
+            print("Best Chromosome:", bestChromosomes, "AE:", bestChromosomes[0], "estEffort:", bestChromosomes[2])
+            sys.exit()
+   
             aeBestChromosomes.append(bestChromosomes[0])
             estEffortBestChromosomes.append(bestChromosomes[2])
+            # print('Iterasi dataset ke-', iter, 'AE:', bestChromosomes[0], 'estEffort:', bestChromosomes[2])
+      
         # process a count sum of the best chromosomes every datasets based on value AEs(value Objektif)
         # =============================================================================================
         sizeDataset = len(datas)
         averageBestChromosome = sum(aeBestChromosomes) / sizeDataset
-        # print(averageBestChromosome)
         return {'MAE': averageBestChromosome, 'AEs': aeBestChromosomes, 'estEfforts': estEffortBestChromosomes}
 
 
@@ -267,8 +283,8 @@ ranges = prameters.prameterFfDf.parameter
 parameterSetting = {
     "popsize": 40,            # size populasi
     "crossoverRate": 0.25,
-    "numOfDimension": 13,    # long kromosome from prameter friction and dynamic factors
-    "mutationRate": 1 / 13,  # 1 / long kromosome
+    "numOfDimension": 22,    # long kromosome from prameter friction and dynamic factors
+    "mutationRate": 1 / 22,  # 1 / long kromosome
     "ranges": ranges,        # rentang variabel desain lowBound and UpperBound
     "maxIter": 60,           # Loop sebanyak value maxIter
     "stoppingFitness": 0.03
@@ -276,9 +292,10 @@ parameterSetting = {
 
 algen = AlgoritmaGenetika(parameterSetting)
 hasil = algen.mainAlgen()
-print('result optimation algen : ', hasil)
+# print('result optimation algen : ', hasil)
 MAE = hasil['MAE']
 estEfforts = hasil['estEfforts']
+
 # Evaluasi
 # ========
 runs = 1000
@@ -303,5 +320,5 @@ for estEffort in range(len(estEfforts)):
     AE = abs(estEfforts[estEffort] - randomGuessing['estEffortP0s'][estEffort])
     aeMinEstimated = AE / minEstimated
     aeMaxEstimated = AE / maxEstimated
-    print('AE', AE, 'MAE_P0', MAE_P0, 'estEffortP0s', estEffortP0s, 'SA_P0', SA_P0, 'STDEV P0', StDev_P0,
-          'ES', ES, 'AE MIN ESTIMATED', aeMinEstimated, 'AE MAX ESTIMATED', aeMaxEstimated)
+    # print('AE', AE, 'MAE_P0', MAE_P0, 'estEffortP0s', estEffortP0s, 'SA_P0', SA_P0, 'STDEV P0', StDev_P0,
+    #       'ES', ES, 'AE MIN ESTIMATED', aeMinEstimated, 'AE MAX ESTIMATED', aeMaxEstimated)
