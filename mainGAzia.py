@@ -40,7 +40,7 @@ class AlgoritmaGenetikaZiauddin:
         # Mapping kolom dataset Ziauddin
         self.effort_idx = parameterSetting.get("effort_idx", 0)
         self.vi_idx = parameterSetting.get("vi_idx", 1)
-        self.actual_idx = parameterSetting.get("actual_idx", 8)
+        self.actual_idx = parameterSetting.get("actual_idx", 7)
 
         if self.seed is not None:
             random.seed(self.seed)
@@ -433,7 +433,7 @@ if __name__ == "__main__":
         # =========================
         "effort_idx": 0,
         "vi_idx": 1,
-        "actual_idx": 8,
+        "actual_idx": 7,
     }
 
     algen = AlgoritmaGenetikaZiauddin(parameterSetting)
@@ -445,6 +445,10 @@ if __name__ == "__main__":
     print("Standar Deviasi Fitness Awal:", hasil["Standar Deviasi Fitness Awal"])
     print("Generasi Menuju Fitness Terbaik:", hasil["Generasi Menuju Fitness Terbaik"])
     print("MAE Akhir:", hasil["MAE"])
+    print("AEs Per Project:", hasil["AEs"])
+    print("Jumlah AE:", len(hasil["AEs"]))
+    for index, ae in enumerate(hasil["AEs"], start=1):
+        print(f"AE Project {index}: {ae}")
 
     # ========================================================
     # Evaluasi tambahan menggunakan random guessing
@@ -496,3 +500,9 @@ if __name__ == "__main__":
     print("Effect Size:", ES)
     print("MBRE:", MBRE)
     print("MIBRE:", MIBRE)
+
+    print("\n===== DATA UNTUK UJI WILCOXON =====")
+    print("ae_algen_zia = [")
+    for ae in hasil["AEs"]:
+        print(f"    {ae},")
+    print("]")
