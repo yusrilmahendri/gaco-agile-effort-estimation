@@ -1,21 +1,20 @@
-# gaco_init_maxwell.py
-
-import math
 import random
 import statistics
+import math
 import bisect
 
 import datasetMaxwel as dt
-import parameter as pr
+import parameter as prameters
 import random_guessing as rg
 
 
-class HybridGA_InitACO_Maxwell:
+class AlgoritmaGenetikaMaxwell:
     """
-    Hybrid Genetic Algorithm dengan Ant Colony Optimization untuk dataset Maxwell.
+    Algoritma Genetika murni untuk dataset Maxwell.
 
-    ACO digunakan hanya pada tahap inisialisasi populasi awal.
-    Setelah populasi awal terbentuk, proses evolusi dilakukan menggunakan GA.
+    Populasi awal dibangkitkan secara acak.
+    Kode ini digunakan sebagai pembanding terhadap model GACO,
+    terutama untuk mengukur kontribusi ACO pada kualitas inisialisasi populasi awal.
 
     Output utama:
     - Best Fitness Awal
@@ -26,9 +25,6 @@ class HybridGA_InitACO_Maxwell:
     """
 
     def __init__(self, parameterSetting):
-        # =========================
-        # Parameter Genetic Algorithm
-        # =========================
         self.popsize = parameterSetting["popsize"]
         self.crossoverRate = parameterSetting["crossoverRate"]
         self.numOfDimension = parameterSetting["numOfDimension"]
@@ -41,20 +37,7 @@ class HybridGA_InitACO_Maxwell:
         self.mutationSigma = parameterSetting.get("mutationSigma", 0.05)
         self.seed = parameterSetting.get("seed", None)
 
-        # =========================
-        # Parameter ACO untuk inisialisasi
-        # =========================
-        self.rho = parameterSetting.get("rho", 0.1)
-        self.alpha = parameterSetting.get("alpha", 1.0)
-        self.beta = parameterSetting.get("beta", 2.0)
-        self.q0 = parameterSetting.get("q0", 0.5)
-        self.tau_init = parameterSetting.get("tau_init", 1.0)
-        self.tau_min = parameterSetting.get("tau_min", 1e-6)
-        self.tau_max = parameterSetting.get("tau_max", 100.0)
-
-        # =========================
         # Mapping kolom dataset Maxwell
-        # =========================
         self.vi_idx = parameterSetting.get("vi_idx", 0)
         self.actual_idx = parameterSetting.get("actual_idx", 2)
         self.effort_idx = parameterSetting.get("effort_idx", 4)
@@ -63,80 +46,101 @@ class HybridGA_InitACO_Maxwell:
             random.seed(self.seed)
 
     # ============================================================
-    # Utility Genetic Algorithm
+    # Utility dasar GA
     # ============================================================
 
-    def _initial_chromosome(self):
+    def initialPopulasi(self):
         """
-        Membentuk satu kromosom acak berdasarkan rentang parameter.
+        Membentuk satu kromosom secara acak berdasarkan rentang parameter.
         """
-        return [random.uniform(lb, ub) for (lb, ub) in self.ranges]
+        chromosome = []
 
-    def _lnD(self, chromosome):
+        for lowBound, uppBound in self.ranges:
+            chromosome.append(random.uniform(lowBound, uppBound))
+
+        return chromosome
+
+    def initialPopulation(self):
         """
-        Menghitung ln(D).
-
-        Kromosom berisi kombinasi nilai FF dan DF.
-        Karena D berasal dari perkalian seluruh gen, maka digunakan log
-        untuk menjaga stabilitas numerik.
+        Membentuk populasi awal secara acak.
         """
-        total = 0.0
+        return [self.initialPopulasi() for _ in range(self.popsize)]
 
-        for gene in chromosome:
-            gene = max(gene, 1e-12)
-            total += math.log(gene)
+    def getDeceleration(self, chromosome):
+        """
+        Menghitung nilai deceleration.
 
-        return total
+        Untuk dataset Maxwell:
+        - 7 parameter pertama adalah Friction Factors
+        - 15 parameter berikutnya adalah Dynamic Factors
 
-    def _calc_AE(self, lnD, vi, effort, actualEffort):
+        Total dimensi = 22.
+        """
+
+        hasilFf = 1.0
+        hasilDf = 1.0
+
+        # 7 parameter pertama → FF
+        for gene in chromosome[:7]:
+            hasilFf *= max(gene, 1e-12)
+
+        # 15 parameter berikutnya → DF
+        for gene in chromosome[7:]:
+            hasilDf *= max(gene, 1e-12)
+
+        return hasilFf * hasilDf
+
+    def calcAE(self, deceleration, vi, effort, actualEffort):
         """
         Menghitung Absolute Error dan estimated effort.
 
-        D = exp(lnD)
-        V = vi ^ D
+        Formula:
+        V = VI ^ D
         estimated effort = effort / V
+        AE = |actual effort - estimated effort|
         """
 
         if vi <= 0:
             return 1e18, 0.0
 
-        lnD_clamped = max(min(lnD, 50.0), -50.0)
-        D = math.exp(lnD_clamped)
+        try:
+            v = vi ** deceleration
+            estEffort = effort / v
+            AE = abs(actualEffort - estEffort)
+        except OverflowError:
+            AE = 1e18
+            estEffort = 0.0
 
-        lnV = D * math.log(vi)
-        estimatedEffort = effort * math.exp(-lnV)
+        return AE, estEffort
 
-        AE = abs(actualEffort - estimatedEffort)
-
-        return AE, estimatedEffort
-
-    def _evaluate(self, population, vi, effort, actual):
+    def evaluate(self, population, vi, effort, actualEffort):
         """
-        Mengevaluasi seluruh kromosom dalam populasi.
+        Mengevaluasi populasi berdasarkan nilai AE.
 
-        Output berupa list:
-        (AE, chromosome, estimatedEffort)
-
-        Diurutkan berdasarkan AE terkecil.
+        Output:
+        List tuple (AE, chromosome, estimated effort)
+        Diurutkan dari AE terkecil.
         """
-        scored = []
+
+        results = []
 
         for chromosome in population:
-            lnD = self._lnD(chromosome)
-            ae, estimated = self._calc_AE(lnD, vi, effort, actual)
-            scored.append((ae, chromosome, estimated))
+            deceleration = self.getDeceleration(chromosome)
+            AE, estEffort = self.calcAE(deceleration, vi, effort, actualEffort)
+            results.append((AE, chromosome, estEffort))
 
-        scored.sort(key=lambda x: x[0])
+        results.sort(key=lambda x: x[0])
 
-        return scored
+        return results
 
-    def _fitness_from_AEs(self, AEs):
+    def fitnessFromAEs(self, AEs):
         """
-        Mengubah AE menjadi probabilitas fitness.
+        Mengubah AE menjadi fitness.
 
         Fitness = 1 / (1 + AE)
         Semakin kecil AE, semakin besar fitness.
         """
+
         fitness_values = [1.0 / (1.0 + ae) for ae in AEs]
         total_fitness = sum(fitness_values)
 
@@ -145,15 +149,16 @@ class HybridGA_InitACO_Maxwell:
 
         return [fit / total_fitness for fit in fitness_values]
 
-    def _population_fitness_stats(self, AEs):
+    def populationFitnessStats(self, AEs):
         """
         Menghitung statistik fitness populasi awal.
 
         Indikator:
-        - Best fitness awal
-        - Mean fitness awal
-        - Standar deviasi fitness awal
+        - Best Fitness Awal
+        - Mean Fitness Awal
+        - Standar Deviasi Fitness Awal
         """
+
         fitness_values = [1.0 / (1.0 + ae) for ae in AEs]
 
         best_fitness = max(fitness_values)
@@ -166,10 +171,11 @@ class HybridGA_InitACO_Maxwell:
 
         return best_fitness, mean_fitness, std_fitness
 
-    def _roulette(self, weights, k):
+    def roulette(self, weights, k):
         """
         Roulette wheel selection.
         """
+
         if not weights:
             return []
 
@@ -204,10 +210,11 @@ class HybridGA_InitACO_Maxwell:
 
         return selected_indexes
 
-    def _make_pairs(self, indexes):
+    def makePairs(self, indexes):
         """
-        Membentuk pasangan parent untuk proses crossover.
+        Membentuk pasangan parent.
         """
+
         random.shuffle(indexes)
 
         return [
@@ -215,10 +222,11 @@ class HybridGA_InitACO_Maxwell:
             for i in range(0, len(indexes) - 1, 2)
         ]
 
-    def _single_point_crossover(self, parent1, parent2, cut):
+    def singlePointCrossover(self, parent1, parent2, cut):
         """
         Single point crossover.
         """
+
         cut = max(0, min(cut, self.numOfDimension - 2))
 
         child1 = parent1[:cut + 1] + parent2[cut + 1:]
@@ -226,13 +234,14 @@ class HybridGA_InitACO_Maxwell:
 
         return child1, child2
 
-    def _mutate(self, chromosome):
+    def mutate(self, chromosome):
         """
         Gaussian mutation.
 
         Mutasi dilakukan pada setiap gen berdasarkan mutationRate.
-        Nilai gen tetap dibatasi pada range parameter.
+        Nilai hasil mutasi tetap berada dalam rentang parameter.
         """
+
         mutated = chromosome[:]
 
         for i in range(self.numOfDimension):
@@ -246,168 +255,49 @@ class HybridGA_InitACO_Maxwell:
         return mutated
 
     # ============================================================
-    # ACO untuk inisialisasi populasi awal
+    # Main process GA
     # ============================================================
 
-    def _aco_initialize_population(self, vi, effort, actual, n_ants=30, n_iters=10, bins=10):
-        """
-        Membentuk populasi awal menggunakan ACO.
+    def mainAlgen(self):
+        datas = dt.CetakDataset.maxwelDataset()
 
-        Setiap dimensi kromosom dibagi ke dalam beberapa bin.
-        Semut memilih nilai berdasarkan kombinasi feromon dan heuristik.
-        Kandidat terbaik akan memperkuat feromon pada bin yang dipilih.
-        """
+        aeBestChromosomes = []
+        estEffortBestChromosomes = []
+        actualEfforts = []
 
-        edges = []
-        centers = []
-
-        for lb, ub in self.ranges:
-            step = (ub - lb) / bins
-
-            current_edges = [lb + i * step for i in range(bins + 1)]
-            current_centers = [
-                0.5 * (current_edges[i] + current_edges[i + 1])
-                for i in range(bins)
-            ]
-
-            edges.append(current_edges)
-            centers.append(current_centers)
-
-        tau = [
-            [self.tau_init] * bins
-            for _ in range(self.numOfDimension)
-        ]
-
-        pool = []
-
-        for _ in range(n_iters):
-            candidates = []
-
-            for _ant in range(n_ants):
-                chromosome = []
-
-                for d in range(self.numOfDimension):
-                    heuristic = [1.0 / bins] * bins
-
-                    scores = [
-                        (max(tau[d][b], self.tau_min) ** self.alpha)
-                        * (max(heuristic[b], 1e-12) ** self.beta)
-                        for b in range(bins)
-                    ]
-
-                    if random.random() < self.q0:
-                        selected_bin = max(range(bins), key=lambda i: scores[i])
-                    else:
-                        total_score = sum(scores) or 1.0
-                        r = random.random()
-                        acc = 0.0
-                        selected_bin = 0
-
-                        for i, score in enumerate(scores):
-                            acc += score / total_score
-
-                            if r <= acc:
-                                selected_bin = i
-                                break
-
-                    chromosome.append(centers[d][selected_bin])
-
-                lnD = self._lnD(chromosome)
-                ae, estimated = self._calc_AE(lnD, vi, effort, actual)
-
-                candidates.append((ae, chromosome, estimated))
-
-            # Evaporasi feromon
-            for d in range(self.numOfDimension):
-                for b in range(bins):
-                    tau[d][b] = max(
-                        self.tau_min,
-                        (1.0 - self.rho) * tau[d][b]
-                    )
-
-            # Update feromon berdasarkan kandidat terbaik
-            candidates.sort(key=lambda x: x[0])
-            best_ae, best_chromosome, _ = candidates[0]
-
-            delta = 1.0 / (1.0 + best_ae)
-
-            for d, value in enumerate(best_chromosome):
-                current_edges = edges[d]
-
-                bin_idx = bisect.bisect_right(current_edges, value) - 1
-                bin_idx = min(len(current_edges) - 2, max(0, bin_idx))
-
-                tau[d][bin_idx] = min(
-                    self.tau_max,
-                    tau[d][bin_idx] + delta
-                )
-
-            pool.extend(candidates)
-
-        # Ambil kandidat terbaik dari pool ACO sebagai populasi awal GA
-        pool.sort(key=lambda x: x[0])
-
-        initial_population = [
-            chromosome
-            for _, chromosome, _ in pool[:self.popsize]
-        ]
-
-        # Jika belum cukup, tambahkan kromosom acak
-        while len(initial_population) < self.popsize:
-            initial_population.append(self._initial_chromosome())
-
-        return initial_population
-
-    # ============================================================
-    # Main process
-    # ============================================================
-
-    def run(self):
-        rows = dt.CetakDataset.maxwelDataset()
-
-        ae_results = []
-        estimated_results = []
-        actual_results = []
-
+        # Logging untuk tabel kontribusi ACO/GA
         initial_best_fitness_results = []
         initial_mean_fitness_results = []
         initial_std_fitness_results = []
         best_generation_results = []
 
-        for row in rows:
-            vi = row[self.vi_idx]
-            actual = row[self.actual_idx]
-            effort = row[self.effort_idx]
+        for data in datas:
+            vi = data[self.vi_idx]
+            actualEffort = data[self.actual_idx]
+            effort = data[self.effort_idx]
 
             if vi <= 0:
                 continue
 
             # ====================================================
-            # 1. Inisialisasi populasi awal menggunakan ACO
+            # 1. Inisialisasi populasi awal secara acak
             # ====================================================
-            population = self._aco_initialize_population(
-                vi,
-                effort,
-                actual,
-                n_ants=30,
-                n_iters=10,
-                bins=10
-            )
+            population = self.initialPopulation()
 
             # ====================================================
             # 2. Evaluasi populasi awal
             # ====================================================
-            scored = self._evaluate(population, vi, effort, actual)
+            scored = self.evaluate(population, vi, effort, actualEffort)
 
             initial_AEs = [ae for ae, _, _ in scored]
 
-            best_fit_awal, mean_fit_awal, std_fit_awal = self._population_fitness_stats(initial_AEs)
+            best_fit_awal, mean_fit_awal, std_fit_awal = self.populationFitnessStats(initial_AEs)
 
             initial_best_fitness_results.append(best_fit_awal)
             initial_mean_fitness_results.append(mean_fit_awal)
             initial_std_fitness_results.append(std_fit_awal)
 
-            best_AE, best_chromosome, best_estimated = scored[0]
+            best_AE, best_chromosome, best_estEffort = scored[0]
 
             best_generation = 0
             no_improve = 0
@@ -423,15 +313,15 @@ class HybridGA_InitACO_Maxwell:
                 ]
 
                 AEs = [ae for ae, _, _ in scored]
-                fitness = self._fitness_from_AEs(AEs)
+                fitness = self.fitnessFromAEs(AEs)
 
                 # Seleksi parent
-                parent_indexes = self._roulette(
+                parent_indexes = self.roulette(
                     fitness,
                     (self.popsize // 2) * 2
                 )
 
-                pairs = self._make_pairs(parent_indexes)
+                pairs = self.makePairs(parent_indexes)
 
                 # Crossover dan mutasi
                 offspring = []
@@ -442,16 +332,16 @@ class HybridGA_InitACO_Maxwell:
 
                     if random.random() < self.crossoverRate:
                         cut = random.randint(1, self.numOfDimension - 2)
-                        child1, child2 = self._single_point_crossover(parent1, parent2, cut)
+                        child1, child2 = self.singlePointCrossover(parent1, parent2, cut)
                     else:
                         child1, child2 = parent1[:], parent2[:]
 
-                    offspring.append(self._mutate(child1))
-                    offspring.append(self._mutate(child2))
+                    offspring.append(self.mutate(child1))
+                    offspring.append(self.mutate(child2))
 
                 # Replacement
                 pool = population + offspring
-                scored_pool = self._evaluate(pool, vi, effort, actual)
+                scored_pool = self.evaluate(pool, vi, effort, actualEffort)
 
                 new_population = elites[:]
 
@@ -462,11 +352,11 @@ class HybridGA_InitACO_Maxwell:
                     new_population.append(chromosome[:])
 
                 population = new_population
-                scored = self._evaluate(population, vi, effort, actual)
+                scored = self.evaluate(population, vi, effort, actualEffort)
 
                 # Update solusi terbaik
                 if scored[0][0] + 1e-12 < best_AE:
-                    best_AE, best_chromosome, best_estimated = scored[0]
+                    best_AE, best_chromosome, best_estEffort = scored[0]
                     best_generation = gen + 1
                     no_improve = 0
                 else:
@@ -478,21 +368,27 @@ class HybridGA_InitACO_Maxwell:
 
             best_generation_results.append(best_generation)
 
-            ae_results.append(best_AE)
-            estimated_results.append(best_estimated)
-            actual_results.append(actual)
+            aeBestChromosomes.append(best_AE)
+            estEffortBestChromosomes.append(best_estEffort)
+            actualEfforts.append(actualEffort)
 
-        MAE = sum(ae_results) / len(ae_results) if ae_results else float("inf")
+        MAE = (
+            sum(aeBestChromosomes) / len(aeBestChromosomes)
+            if aeBestChromosomes
+            else float("inf")
+        )
 
         return {
+            "MAE": MAE,
+            "AEs": aeBestChromosomes,
+            "estEfforts": estEffortBestChromosomes,
+            "actualEfforts": actualEfforts,
+
             "Best Fitness Awal": statistics.mean(initial_best_fitness_results),
             "Mean Fitness Awal": statistics.mean(initial_mean_fitness_results),
             "Standar Deviasi Fitness Awal": statistics.mean(initial_std_fitness_results),
             "Generasi Menuju Fitness Terbaik": statistics.mean(best_generation_results),
-            "MAE": MAE,
-            "AEs": ae_results,
-            "estEfforts": estimated_results,
-            "actualEfforts": actual_results,
+
             "Best Fitness Awal Per Project": initial_best_fitness_results,
             "Mean Fitness Awal Per Project": initial_mean_fitness_results,
             "Standar Deviasi Fitness Awal Per Project": initial_std_fitness_results,
@@ -505,7 +401,7 @@ class HybridGA_InitACO_Maxwell:
 # ============================================================
 
 if __name__ == "__main__":
-    ranges = pr.prameterFfDf.parameter
+    ranges = prameters.prameterFfDf.parameter
 
     parameterSetting = {
         # =========================
@@ -524,17 +420,6 @@ if __name__ == "__main__":
         "seed": 42,
 
         # =========================
-        # Parameter ACO
-        # =========================
-        "rho": 0.1,
-        "alpha": 1.0,
-        "beta": 2.0,
-        "q0": 0.5,
-        "tau_init": 1.0,
-        "tau_min": 1e-6,
-        "tau_max": 100.0,
-
-        # =========================
         # Mapping kolom dataset Maxwell
         # =========================
         "vi_idx": 0,
@@ -542,22 +427,22 @@ if __name__ == "__main__":
         "effort_idx": 4,
     }
 
-    gaco = HybridGA_InitACO_Maxwell(parameterSetting)
-    result = gaco.run()
+    algen = AlgoritmaGenetikaMaxwell(parameterSetting)
+    hasil = algen.mainAlgen()
 
-    print("===== HASIL GACO DATASET MAXWELL =====")
-    print("Best Fitness Awal:", result["Best Fitness Awal"])
-    print("Mean Fitness Awal:", result["Mean Fitness Awal"])
-    print("Standar Deviasi Fitness Awal:", result["Standar Deviasi Fitness Awal"])
-    print("Generasi Menuju Fitness Terbaik:", result["Generasi Menuju Fitness Terbaik"])
-    print("MAE Akhir:", result["MAE"])
+    print("===== HASIL GA DATASET MAXWELL =====")
+    print("Best Fitness Awal:", hasil["Best Fitness Awal"])
+    print("Mean Fitness Awal:", hasil["Mean Fitness Awal"])
+    print("Standar Deviasi Fitness Awal:", hasil["Standar Deviasi Fitness Awal"])
+    print("Generasi Menuju Fitness Terbaik:", hasil["Generasi Menuju Fitness Terbaik"])
+    print("MAE Akhir:", hasil["MAE"])
 
     # ========================================================
     # Evaluasi tambahan menggunakan random guessing
     # ========================================================
-    MAE = result["MAE"]
-    estimatedEfforts = result["estEfforts"]
-    actualEfforts = result["actualEfforts"]
+    MAE = hasil["MAE"]
+    estEfforts = hasil["estEfforts"]
+    actualEfforts = hasil["actualEfforts"]
 
     runs = 1000
     random_guessing_runner = rg.RandomGuessing(actualEfforts, runs)
@@ -571,32 +456,28 @@ if __name__ == "__main__":
 
     def mbre(actual, estimated):
         denominator = min(actual, estimated)
-
         if denominator == 0:
             denominator = 1e-12
-
         return abs(actual - estimated) / denominator
 
     def mibre(actual, estimated):
         denominator = max(actual, estimated)
-
         if denominator == 0:
             denominator = 1e-12
-
         return abs(actual - estimated) / denominator
 
     MBRE = sum(
         mbre(actual, estimated)
-        for actual, estimated in zip(actualEfforts, estimatedEfforts)
+        for actual, estimated in zip(actualEfforts, estEfforts)
     ) / len(actualEfforts)
 
     MIBRE = sum(
         mibre(actual, estimated)
-        for actual, estimated in zip(actualEfforts, estimatedEfforts)
+        for actual, estimated in zip(actualEfforts, estEfforts)
     ) / len(actualEfforts)
 
     print("\n===== EVALUASI TAMBAHAN =====")
-    print("MAE GACO:", MAE)
+    print("MAE GA:", MAE)
     print("MAE P0 Random Guessing:", MAE_P0)
     print("Standard Accuracy:", SA)
     print("Effect Size:", ES)

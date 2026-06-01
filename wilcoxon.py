@@ -36,6 +36,7 @@ estEffort_gaco = [
     2210.261651, 9409.074245
 ]
 
+
 # --- 1. Hitung Perbedaan ---
 # Perbedaan: estEffort_algen - estEffort_gaco
 diff = np.array(estEffort_algen) - np.array(estEffort_gaco)

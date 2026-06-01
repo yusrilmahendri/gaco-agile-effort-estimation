@@ -1,324 +1,498 @@
-import sys
 import random
 import statistics
+import bisect
+
 import datasetZia as dataset
-import parameter as prameters
-# import ffdfZia as prameters
-# import parameter as pr 
+import ffdfZia as prameters
 import random_guessing as rg
-import datasetMaxwel as dt  
 
 
-class AlgoritmaGenetika:
+class AlgoritmaGenetikaZiauddin:
+    """
+    Algoritma Genetika murni untuk dataset Ziauddin.
+
+    Populasi awal dibangkitkan secara acak.
+    Kode ini digunakan sebagai pembanding terhadap GACO,
+    khususnya untuk mengukur kontribusi ACO terhadap kualitas inisialisasi populasi awal.
+
+    Output utama:
+    - Best Fitness Awal
+    - Mean Fitness Awal
+    - Standar Deviasi Fitness Awal
+    - Generasi Menuju Fitness Terbaik
+    - MAE Akhir
+    """
 
     def __init__(self, parameterSetting):
-        self.popsize = parameterSetting['popsize']
-        self.crossoverRate = parameterSetting['crossoverRate']
-        self.numOfDimension = parameterSetting['numOfDimension']
-        self.mutationRate = parameterSetting['mutationRate']
-        self.ranges = parameterSetting['ranges']
-        self.maxIter = parameterSetting['maxIter']
-        self.stoppingFitness = parameterSetting['stoppingFitness']
+        self.popsize = parameterSetting["popsize"]
+        self.crossoverRate = parameterSetting["crossoverRate"]
+        self.numOfDimension = parameterSetting["numOfDimension"]
+        self.mutationRate = parameterSetting["mutationRate"]
+        self.ranges = parameterSetting["ranges"]
+        self.maxIter = parameterSetting["maxIter"]
+        self.stoppingFitness = parameterSetting["stoppingFitness"]
+
+        self.patience = parameterSetting.get("patience", 10)
+        self.elite_k = parameterSetting.get("elite_k", 1)
+        self.mutationSigma = parameterSetting.get("mutationSigma", 0.05)
+        self.seed = parameterSetting.get("seed", None)
+
+        # Mapping kolom dataset Ziauddin
+        self.effort_idx = parameterSetting.get("effort_idx", 0)
+        self.vi_idx = parameterSetting.get("vi_idx", 1)
+        self.actual_idx = parameterSetting.get("actual_idx", 8)
+
+        if self.seed is not None:
+            random.seed(self.seed)
+
+    # ============================================================
+    # Utility dasar GA
+    # ============================================================
 
     def initialPopulasi(self):
-        ''' INITIAL POPULASI '''
+        """
+        Membentuk satu kromosom secara acak berdasarkan rentang parameter.
+        """
         chromosome = []
-        for i in range(len(self.ranges)):
-            lowBound = self.ranges[i][0]
-            uppBound = self.ranges[i][1]
+
+        for lowBound, uppBound in self.ranges:
             chromosome.append(random.uniform(lowBound, uppBound))
+
         return chromosome
 
+    def initialPopulation(self):
+        """
+        Membentuk populasi awal secara acak sebanyak popsize.
+        """
+        return [self.initialPopulasi() for _ in range(self.popsize)]
+
     def getDeceleration(self, chromosome):
-        """Hitung Deceleration: FF (6 param) × DF (16 param)"""
-        hasilFf = 1
-        hasilDf = 1
+        """
+        Menghitung nilai deceleration.
 
-        # 6 parameter pertama → FF
-        for g in chromosome[:6]:
-            hasilFf *= g
+        Untuk dataset Ziauddin:
+        - 4 parameter pertama adalah Friction Factors
+        - 9 parameter berikutnya adalah Dynamic Factors
 
-        # 16 parameter berikutnya → DF
-        for g in chromosome[6:]:
-            hasilDf *= g
+        Total dimensi = 13.
+        """
+
+        hasilFf = 1.0
+        hasilDf = 1.0
+
+        # 4 parameter pertama → FF
+        for gene in chromosome[:4]:
+            hasilFf *= max(gene, 1e-12)
+
+        # 9 parameter berikutnya → DF
+        for gene in chromosome[4:]:
+            hasilDf *= max(gene, 1e-12)
 
         return hasilFf * hasilDf
 
+    def calcAE(self, deceleration, vi, effort, actualEffort):
+        """
+        Menghitung Absolute Error dan estimated effort.
 
-    def calcAE(self, hasilDeceleration, vi, effort, actualEffort):
-        ''' VALUE AE '''
-        v = vi**hasilDeceleration
-        hasilEffortInTime = effort / v
-        hasilAE = abs(actualEffort - hasilEffortInTime)
-        return hasilAE
+        Formula:
+        V = VI ^ D
+        estimated effort = effort / V
+        AE = |actual effort - estimated effort|
+        """
 
-    def selectCandidateChromosomes(self, probCummulatives, chromosomes):
-        rets = []
-        for i in range(len(probCummulatives)):
-            # Langkah 1. Bangkitkan nilai acak [0,1]
-            # =======================================
-            randomValue = random.uniform(0, 1)
-            # Langkah 2. Bandingkan nilai acak dengan nilai probabilitas kumulatif ke-i
-            # ==========================================================================
-            if randomValue > probCummulatives[i] and randomValue <= probCummulatives[i+1]:
-                rets.append({'index': i, 'chromosome': chromosomes[i+1]})
-        return rets
+        if vi <= 0:
+            return 1e18, 0.0
 
-    def selectRoletteWheelChromosome(self, AEs, chromosomes):
-        '''' CrossOver then selection with roda rolet '''
-        # for that we should compute the cumulative probability values
-        # that values finally should 1
-        # ============================================================
-        probCummulative = 0
-        probCummulatives = []
-        for AE in AEs:
-            probability = AE / sum(AEs)
-            probCummulative = probCummulative + probability
-            probCummulatives.append(probCummulative)
-        # then has value probality we can selection kandidat chromosome
-        # =============================================================
-        selectedCandidateChromosomes = self.selectCandidateChromosomes(
-            probCummulatives, chromosomes)
-        # a must has value then enough conditions for check for has value cannot empty!
-        # =============================================================================
-        while len(selectedCandidateChromosomes) == 0:
-            selectedCandidateChromosomes = self.selectCandidateChromosomes(
-                probCummulatives, chromosomes)
-        return selectedCandidateChromosomes
+        try:
+            velocity = vi ** deceleration
+            estimatedEffort = effort / velocity
+            AE = abs(actualEffort - estimatedEffort)
+        except OverflowError:
+            AE = 1e18
+            estimatedEffort = 0.0
 
-    def generateRandomValues(self):
-        rets = []
-        # Generate random values along popsize
-        # ====================================
-        for i in range(self.popsize):
-            if random.uniform(0, 1) < self.crossoverRate:
-                rets.append(i)
-        return rets
+        return AE, estimatedEffort
 
-    def replaceChromosomesElement(self, chromosomes, chromosome, index):
-        chromosomes[index] = chromosome
-        return chromosomes
+    def evaluate(self, population, vi, effort, actualEffort):
+        """
+        Mengevaluasi seluruh kromosom dalam populasi.
+
+        Output:
+        List tuple:
+        (AE, chromosome, estimated effort)
+
+        Diurutkan berdasarkan AE terkecil.
+        """
+
+        results = []
+
+        for chromosome in population:
+            deceleration = self.getDeceleration(chromosome)
+            AE, estimatedEffort = self.calcAE(
+                deceleration,
+                vi,
+                effort,
+                actualEffort
+            )
+
+            results.append((AE, chromosome, estimatedEffort))
+
+        results.sort(key=lambda x: x[0])
+
+        return results
+
+    def fitnessFromAEs(self, AEs):
+        """
+        Mengubah AE menjadi fitness.
+
+        Fitness = 1 / (1 + AE)
+
+        Semakin kecil AE, semakin besar fitness.
+        """
+
+        fitness_values = [1.0 / (1.0 + ae) for ae in AEs]
+        total_fitness = sum(fitness_values)
+
+        if total_fitness <= 0:
+            return [1.0 / len(fitness_values)] * len(fitness_values)
+
+        return [fit / total_fitness for fit in fitness_values]
+
+    def populationFitnessStats(self, AEs):
+        """
+        Menghitung statistik fitness populasi awal.
+
+        Indikator:
+        - Best Fitness Awal
+        - Mean Fitness Awal
+        - Standar Deviasi Fitness Awal
+        """
+
+        fitness_values = [1.0 / (1.0 + ae) for ae in AEs]
+
+        best_fitness = max(fitness_values)
+        mean_fitness = statistics.mean(fitness_values)
+
+        if len(fitness_values) > 1:
+            std_fitness = statistics.stdev(fitness_values)
+        else:
+            std_fitness = 0.0
+
+        return best_fitness, mean_fitness, std_fitness
+
+    def roulette(self, weights, k):
+        """
+        Roulette wheel selection berdasarkan probabilitas fitness.
+        """
+
+        if not weights:
+            return []
+
+        weights = [max(0.0, weight) for weight in weights]
+        total = sum(weights)
+
+        if total == 0.0:
+            n = len(weights)
+            weights = [1.0 / n] * n
+            total = 1.0
+
+        cumulative = []
+        running_sum = 0.0
+
+        for weight in weights:
+            running_sum += weight
+            cumulative.append(running_sum / total)
+
+        selected_indexes = []
+
+        for _ in range(k):
+            r = random.random()
+            idx = bisect.bisect_left(cumulative, r)
+
+            if idx < 0:
+                idx = 0
+
+            if idx >= len(weights):
+                idx = len(weights) - 1
+
+            selected_indexes.append(idx)
+
+        return selected_indexes
+
+    def makePairs(self, indexes):
+        """
+        Membentuk pasangan parent untuk proses crossover.
+        """
+
+        random.shuffle(indexes)
+
+        return [
+            (indexes[i], indexes[i + 1])
+            for i in range(0, len(indexes) - 1, 2)
+        ]
+
+    def singlePointCrossover(self, parent1, parent2, cut):
+        """
+        Single point crossover.
+        """
+
+        cut = max(0, min(cut, self.numOfDimension - 2))
+
+        child1 = parent1[:cut + 1] + parent2[cut + 1:]
+        child2 = parent2[:cut + 1] + parent1[cut + 1:]
+
+        return child1, child2
+
+    def mutate(self, chromosome):
+        """
+        Gaussian mutation.
+
+        Mutasi dilakukan pada setiap gen berdasarkan mutationRate.
+        Nilai hasil mutasi tetap dibatasi pada rentang parameter.
+        """
+
+        mutated = chromosome[:]
+
+        for i in range(self.numOfDimension):
+            if random.random() < self.mutationRate:
+                lb, ub = self.ranges[i]
+                step = self.mutationSigma * (ub - lb)
+
+                mutated[i] = mutated[i] + random.gauss(0.0, step)
+                mutated[i] = max(lb, min(ub, mutated[i]))
+
+        return mutated
+
+    # ============================================================
+    # Main process GA
+    # ============================================================
 
     def mainAlgen(self):
-        AEs = []
-        chromosomes = []
-        selectedChromosomesToCrossover = []
-        parentCandidatesIndex = []
+        datas = dataset.CetakDataset.ziauddinDataset()
 
-        ''' INITIAL POPULASI AWAL '''
-        # Ziauddin dataset
-        # ================
-        datas = dt.CetakDataset.maxwelDataset()
-        iter = -1
         aeBestChromosomes = []
         estEffortBestChromosomes = []
-        # loop dataset Ziauddin ke-0....ke-20
-        # ===================================
+        actualEfforts = []
+
+        # Logging untuk tabel kontribusi ACO/GA
+        initial_best_fitness_results = []
+        initial_mean_fitness_results = []
+        initial_std_fitness_results = []
+        best_generation_results = []
+
         for data in datas:
-            iter +=1
-            # print('Iterasi dataset ke-', iter)
-   
-            for longPopsize in range(self.popsize):
-                chromosome = AlgoritmaGenetika.initialPopulasi(self)
-                chromosomes.append(chromosome)
-                deceleration = self.getDeceleration(chromosome)
-                vi = data[0]
-                actEffort = data[2]
-                effort = data[4]
-                AE = self.calcAE(deceleration, vi, effort, actEffort)
-                AEs.append(AE)
-                chromosome = []
- 
-            ''' Seleksi chromosomes '''
-            candidateNewChromosomes = self.selectRoletteWheelChromosome(
-                AEs, chromosomes)
+            effort = data[self.effort_idx]
+            vi = data[self.vi_idx]
+            actualEffort = data[self.actual_idx]
 
-            ''' Create New Populas ke-i '''
-            for candidateNewChromosome in candidateNewChromosomes:
-                chromosomes = self.replaceChromosomesElement(
-                    chromosomes, candidateNewChromosome['chromosome'], candidateNewChromosome['index'])
+            if vi <= 0:
+                continue
 
-            ''' Update Population '''
-            bestChromosomes = []
-            for longMaxIter in range(self.maxIter):
-                # Create random value then get indexs
-                # important, this values we must more than 1 indexs
-                # =================================================
-                ''' Crossover '''
-                randomIndexValues = self.generateRandomValues()
-                while len(randomIndexValues) <= 1:
-                    randomIndexValues = self.generateRandomValues()
-                # selection chromosome for crossover
-                # =================================
-                selectedChromosomesToCrossover = []
-                for randomIndexValue in randomIndexValues:
-                    selectedChromosomesToCrossover.append(
-                        {'chromosomes': chromosomes[randomIndexValue], 'index': randomIndexValue})
-                # generate index parent pairs for crossover
-                # =========================================
-                parentCandidatesIndex = []
-                for selectedChromosomesToCrossovers in selectedChromosomesToCrossover:
-                    for selectedChromosomesToCrossoversed in selectedChromosomesToCrossover:
-                        if selectedChromosomesToCrossovers['index'] != selectedChromosomesToCrossoversed['index']:
-                            parentCandidatesIndex.append(
-                                [selectedChromosomesToCrossovers['index'], selectedChromosomesToCrossoversed['index']])
-                # form the index pair until it becomes unique
-                # ===========================================
-                sortedParentIndexes = []
-                for parentIndex in parentCandidatesIndex:
-                    parentIndex.sort()
-                    sortedParentIndexes.append(parentIndex)
-                finalParentIndexes = []
-                for sortedParentIndex in sortedParentIndexes:
-                    if sortedParentIndex not in finalParentIndexes:
-                        finalParentIndexes.append(sortedParentIndex)
+            # ====================================================
+            # 1. Inisialisasi populasi awal secara acak
+            # ====================================================
+            population = self.initialPopulation()
 
-                ''' Create Offsets '''
-                tempOffsets = []
-                offsets = []
-                for parentsIndex in finalParentIndexes:
-                    cutPointIndex = random.randint(0, self.numOfDimension-1)
-                    if cutPointIndex == self.numOfDimension-1:
-                        for i in range(self.numOfDimension):
-                            if i < self.numOfDimension-1:
-                                tempOffsets.append(
-                                    chromosomes[parentsIndex[1]][i])
-                            else:
-                                tempOffsets.append(
-                                    chromosomes[parentsIndex[0]][cutPointIndex])
+            # ====================================================
+            # 2. Evaluasi populasi awal
+            # ====================================================
+            scored = self.evaluate(population, vi, effort, actualEffort)
+
+            initial_AEs = [ae for ae, _, _ in scored]
+
+            best_fit_awal, mean_fit_awal, std_fit_awal = self.populationFitnessStats(initial_AEs)
+
+            initial_best_fitness_results.append(best_fit_awal)
+            initial_mean_fitness_results.append(mean_fit_awal)
+            initial_std_fitness_results.append(std_fit_awal)
+
+            best_AE, best_chromosome, best_estEffort = scored[0]
+
+            best_generation = 0
+            no_improve = 0
+
+            # ====================================================
+            # 3. Proses evolusi GA
+            # ====================================================
+            for gen in range(self.maxIter):
+                # Elitism: mempertahankan kromosom terbaik
+                elites = [
+                    scored[i][1][:]
+                    for i in range(min(self.elite_k, len(scored)))
+                ]
+
+                AEs = [ae for ae, _, _ in scored]
+                fitness = self.fitnessFromAEs(AEs)
+
+                # Seleksi parent menggunakan roulette wheel
+                parent_indexes = self.roulette(
+                    fitness,
+                    (self.popsize // 2) * 2
+                )
+
+                pairs = self.makePairs(parent_indexes)
+
+                # Crossover dan mutasi
+                offspring = []
+
+                for i, j in pairs:
+                    parent1 = population[i][:]
+                    parent2 = population[j][:]
+
+                    if random.random() < self.crossoverRate:
+                        cut = random.randint(1, self.numOfDimension - 2)
+                        child1, child2 = self.singlePointCrossover(parent1, parent2, cut)
                     else:
-                        for i in range(self.numOfDimension):
-                            if i <= cutPointIndex:
-                                tempOffsets.append(
-                                    chromosomes[parentsIndex[0]][i])
-                            else:
-                                tempOffsets.append(
-                                    chromosomes[parentsIndex[1]][i])
-                    offsets.append(tempOffsets)
-                    tempOffsets = []
+                        child1, child2 = parent1[:], parent2[:]
 
-                tempChromosomes = []
-                tempAEs = []
-                chromosomesOffsets = chromosomes + offsets
-                # Count objektif value and fitness value from combined populations
-                # ================================================================
-                for chromosome in chromosomesOffsets:
-                    deceleration = self.getDeceleration(chromosome)
-                    AE = self.calcAE(deceleration, vi, effort, actEffort)
-                    tempChromosomes.append(chromosome)
-                    tempAEs.append(AE)
-                # Sort the population in descending order by value
-                # ================================================
-                tempAEs.sort(reverse=False)
-                chromosomes = []
-                # create new populations
-                # ======================
-                for i in range(len(tempChromosomes)):
-                    # memastikan jumlah kromosom sesuai ukuran populasi
-                    # ================================================
-                    if i <= self.popsize-1:
-                        chromosomes.append(tempChromosomes[i])
-                tempChromosomes = []
-                ''' Process Mutasi '''
-                # Count Amount mutation
-                # =====================
-                numOfMutation = round(self.mutationRate *
-                                      (self.popsize * self.numOfDimension))
-                for i in range(numOfMutation):
-                    # select random index
-                    # ===================
-                    selectedChromosomeIndex = random.randint(0, self.popsize-1)
-                    # select random gen in index population
-                    # =====================================
-                    selectedGenIndex = random.randint(0, self.numOfDimension-1)
-                    # Change gen population termutation with random value sesuai rentang variabel designs
-                    # ===================================================================================
-                    mutatedChromosome = chromosomes[selectedChromosomeIndex]
-                    lowerBound = self.ranges[selectedGenIndex][0]
-                    upperBound = self.ranges[selectedGenIndex][1]
-                    mutatedChromosome[selectedGenIndex] = random.uniform(
-                        lowerBound, upperBound)
-                    chromosomes[selectedChromosomeIndex] = mutatedChromosome
-                # Count Fungsi Fitness / Value Objektif from new population
-                # =========================================================
-                tempAEs = []
-                AEs = []
-                results = []
-                for chromosome in chromosomes:
-                    deceleration = self.getDeceleration(chromosome)
-                    v = vi**deceleration
-                    estEffort = effort / v
-                    AE = abs(actEffort - estEffort)
-                    results.append([AE, chromosome, estEffort])
-                bestChromosome = min(results)
-                bestChromosomes.append(bestChromosome)
-                # process a will stop if value chromosome terpenuhi with values stopingFitness
-                # ============================================================================
-                if bestChromosome[0] <= self.stoppingFitness:
+                    offspring.append(self.mutate(child1))
+                    offspring.append(self.mutate(child2))
+
+                # Replacement: gabungkan populasi lama dan offspring
+                pool = population + offspring
+                scored_pool = self.evaluate(pool, vi, effort, actualEffort)
+
+                new_population = elites[:]
+
+                for _, chromosome, _ in scored_pool:
+                    if len(new_population) >= self.popsize:
+                        break
+
+                    new_population.append(chromosome[:])
+
+                population = new_population
+                scored = self.evaluate(population, vi, effort, actualEffort)
+
+                # Update solusi terbaik
+                if scored[0][0] + 1e-12 < best_AE:
+                    best_AE, best_chromosome, best_estEffort = scored[0]
+                    best_generation = gen + 1
+                    no_improve = 0
+                else:
+                    no_improve += 1
+
+                # Early stopping
+                if best_AE <= self.stoppingFitness or no_improve >= self.patience:
                     break
-                results = []
-            bestChromosomes = min(bestChromosomes)
-            # print(bestChromosomes[2])
-            print("Best Chromosome:", bestChromosomes, "AE:", bestChromosomes[0], "estEffort:", bestChromosomes[2])
-            sys.exit()
-   
-            aeBestChromosomes.append(bestChromosomes[0])
-            estEffortBestChromosomes.append(bestChromosomes[2])
-            # print('Iterasi dataset ke-', iter, 'AE:', bestChromosomes[0], 'estEffort:', bestChromosomes[2])
-      
-        # process a count sum of the best chromosomes every datasets based on value AEs(value Objektif)
-        # =============================================================================================
-        sizeDataset = len(datas)
-        averageBestChromosome = sum(aeBestChromosomes) / sizeDataset
-        return {'MAE': averageBestChromosome, 'AEs': aeBestChromosomes, 'estEfforts': estEffortBestChromosomes}
+
+            best_generation_results.append(best_generation)
+
+            aeBestChromosomes.append(best_AE)
+            estEffortBestChromosomes.append(best_estEffort)
+            actualEfforts.append(actualEffort)
+
+        MAE = (
+            sum(aeBestChromosomes) / len(aeBestChromosomes)
+            if aeBestChromosomes
+            else float("inf")
+        )
+
+        return {
+            "MAE": MAE,
+            "AEs": aeBestChromosomes,
+            "estEfforts": estEffortBestChromosomes,
+            "actualEfforts": actualEfforts,
+
+            "Best Fitness Awal": statistics.mean(initial_best_fitness_results),
+            "Mean Fitness Awal": statistics.mean(initial_mean_fitness_results),
+            "Standar Deviasi Fitness Awal": statistics.mean(initial_std_fitness_results),
+            "Generasi Menuju Fitness Terbaik": statistics.mean(best_generation_results),
+
+            "Best Fitness Awal Per Project": initial_best_fitness_results,
+            "Mean Fitness Awal Per Project": initial_mean_fitness_results,
+            "Standar Deviasi Fitness Awal Per Project": initial_std_fitness_results,
+            "Generasi Terbaik Per Project": best_generation_results
+        }
 
 
-# data, values rentang variabel design in prameter friction and dynamic factors
-# =====================================================================
-ranges = prameters.prameterFfDf.parameter
-# print('lead value rentang : ', ranges)
+# ============================================================
+# Main execution
+# ============================================================
 
-# prameter setting
-# ================
-parameterSetting = {
-    "popsize": 40,            # size populasi
-    "crossoverRate": 0.25,
-    "numOfDimension": 22,    # long kromosome from prameter friction and dynamic factors
-    "mutationRate": 1 / 22,  # 1 / long kromosome
-    "ranges": ranges,        # rentang variabel desain lowBound and UpperBound
-    "maxIter": 60,           # Loop sebanyak value maxIter
-    "stoppingFitness": 0.03
-}
+if __name__ == "__main__":
+    ranges = prameters.prameterFfDf.parameter
 
-algen = AlgoritmaGenetika(parameterSetting)
-hasil = algen.mainAlgen()
-# print('result optimation algen : ', hasil)
-MAE = hasil['MAE']
-estEfforts = hasil['estEfforts']
+    parameterSetting = {
+        # =========================
+        # Parameter GA
+        # =========================
+        "popsize": 40,
+        "crossoverRate": 0.25,
+        "numOfDimension": len(ranges),
+        "mutationRate": 1 / len(ranges),
+        "ranges": ranges,
+        "maxIter": 60,
+        "stoppingFitness": 0.03,
+        "patience": 10,
+        "elite_k": 1,
+        "mutationSigma": 0.05,
+        "seed": 42,
 
-# Evaluasi
-# ========
-runs = 1000
-run = rg.RandomGuessing(estEfforts, runs)
-randomGuessing = run.mainRandomGuessing()
+        # =========================
+        # Mapping kolom dataset Ziauddin
+        # =========================
+        "effort_idx": 0,
+        "vi_idx": 1,
+        "actual_idx": 8,
+    }
 
-MAE_P0 = randomGuessing['MAE_P0']
-estEffortP0s = randomGuessing['estEffortP0s']
-SA_P0 = 1 - (MAE / MAE_P0)
+    algen = AlgoritmaGenetikaZiauddin(parameterSetting)
+    hasil = algen.mainAlgen()
 
-# a count standar deviasi. dari variabel ESTaePOs
-# ===============================================
-StDev_P0 = statistics.stdev(estEffortP0s)
-ES = abs((MAE - MAE_P0) / StDev_P0)
+    print("===== HASIL GA DATASET ZIAUDDIN =====")
+    print("Best Fitness Awal:", hasil["Best Fitness Awal"])
+    print("Mean Fitness Awal:", hasil["Mean Fitness Awal"])
+    print("Standar Deviasi Fitness Awal:", hasil["Standar Deviasi Fitness Awal"])
+    print("Generasi Menuju Fitness Terbaik:", hasil["Generasi Menuju Fitness Terbaik"])
+    print("MAE Akhir:", hasil["MAE"])
 
-# MBRE AND MIBRE
-for estEffort in range(len(estEfforts)):
-    minEstimated = min(estEfforts[estEffort],
-                       randomGuessing['estEffortP0s'][estEffort])
-    maxEstimated = max(estEfforts[estEffort],
-                       randomGuessing['estEffortP0s'][estEffort])
-    AE = abs(estEfforts[estEffort] - randomGuessing['estEffortP0s'][estEffort])
-    aeMinEstimated = AE / minEstimated
-    aeMaxEstimated = AE / maxEstimated
-    # print('AE', AE, 'MAE_P0', MAE_P0, 'estEffortP0s', estEffortP0s, 'SA_P0', SA_P0, 'STDEV P0', StDev_P0,
-    #       'ES', ES, 'AE MIN ESTIMATED', aeMinEstimated, 'AE MAX ESTIMATED', aeMaxEstimated)
+    # ========================================================
+    # Evaluasi tambahan menggunakan random guessing
+    # ========================================================
+    MAE = hasil["MAE"]
+    estEfforts = hasil["estEfforts"]
+    actualEfforts = hasil["actualEfforts"]
+
+    runs = 1000
+    random_guessing_runner = rg.RandomGuessing(actualEfforts, runs)
+    randomGuessing = random_guessing_runner.mainRandomGuessing()
+
+    MAE_P0 = randomGuessing["MAE_P0"]
+    SA = 1 - (MAE / MAE_P0)
+
+    StDev_P0 = statistics.stdev(randomGuessing["estEffortP0s"])
+    ES = (MAE_P0 - MAE) / StDev_P0 if StDev_P0 > 0 else float("inf")
+
+    def mbre(actual, estimated):
+        denominator = min(actual, estimated)
+
+        if denominator == 0:
+            denominator = 1e-12
+
+        return abs(actual - estimated) / denominator
+
+    def mibre(actual, estimated):
+        denominator = max(actual, estimated)
+
+        if denominator == 0:
+            denominator = 1e-12
+
+        return abs(actual - estimated) / denominator
+
+    MBRE = sum(
+        mbre(actual, estimated)
+        for actual, estimated in zip(actualEfforts, estEfforts)
+    ) / len(actualEfforts)
+
+    MIBRE = sum(
+        mibre(actual, estimated)
+        for actual, estimated in zip(actualEfforts, estEfforts)
+    ) / len(actualEfforts)
+
+    print("\n===== EVALUASI TAMBAHAN =====")
+    print("MAE GA:", MAE)
+    print("MAE P0 Random Guessing:", MAE_P0)
+    print("Standard Accuracy:", SA)
+    print("Effect Size:", ES)
+    print("MBRE:", MBRE)
+    print("MIBRE:", MIBRE)
