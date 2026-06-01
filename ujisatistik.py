@@ -1,4 +1,5 @@
 from scipy.stats import wilcoxon
+from scipy.stats import rankdata
 import pandas as pd
 import statistics
 
@@ -39,10 +40,6 @@ ae_gaco_maxwell = [
 ]
 
 
-#
-# Catatan:
-# Data Ziauddin di bawah ini belum digunakan dalam output karena masih bersifat sementara.
-# Setelah data AE GA dan GACO Ziauddin sudah final, aktifkan kembali bagian Tabel 4.3.
 # ============================================================
 # Data Absolute Error Dataset Ziauddin
 # ============================================================
@@ -65,6 +62,92 @@ ae_gaco_zia = [
 ]
 
 
+# ============================================================
+# Fungsi Wilcoxon Ranks Table
+# ============================================================
+def calculate_wilcoxon_ranks(dataset_name, ae_ga, ae_gaco, variable_label):
+    """
+    Menghitung tabel Ranks untuk Wilcoxon Signed-Rank Test.
+
+    Selisih dihitung sebagai:
+    AE GA - AE GACO
+
+    Interpretasi:
+    - Negative Ranks: AE GA < AE GACO, artinya GA lebih baik.
+    - Positive Ranks: AE GA > AE GACO, artinya GACO lebih baik.
+    - Ties: AE GA = AE GACO.
+    """
+    validate_data(dataset_name, ae_ga, ae_gaco)
+
+    differences = [ga - gaco for ga, gaco in zip(ae_ga, ae_gaco)]
+    non_zero_abs_diff = [abs(diff) for diff in differences if diff != 0]
+
+    if len(non_zero_abs_diff) > 0:
+        ranks = rankdata(non_zero_abs_diff, method="average")
+    else:
+        ranks = []
+
+    rank_index = 0
+    negative_ranks = []
+    positive_ranks = []
+    ties_count = 0
+
+    for diff in differences:
+        if diff < 0:
+            negative_ranks.append(float(ranks[rank_index]))
+            rank_index += 1
+        elif diff > 0:
+            positive_ranks.append(float(ranks[rank_index]))
+            rank_index += 1
+        else:
+            ties_count += 1
+
+    negative_n = len(negative_ranks)
+    positive_n = len(positive_ranks)
+    total_n = len(differences)
+
+    negative_mean_rank = sum(negative_ranks) / negative_n if negative_n > 0 else 0.0
+    positive_mean_rank = sum(positive_ranks) / positive_n if positive_n > 0 else 0.0
+
+    negative_sum_rank = sum(negative_ranks)
+    positive_sum_rank = sum(positive_ranks)
+
+    rank_rows = [
+        {
+            "Dataset": dataset_name,
+            "Variabel": variable_label,
+            "Ranks": "Negative Ranks",
+            "N": negative_n,
+            "Mean Rank": round(negative_mean_rank, 2),
+            "Sum of Ranks": round(negative_sum_rank, 2),
+        },
+        {
+            "Dataset": dataset_name,
+            "Variabel": variable_label,
+            "Ranks": "Positive Ranks",
+            "N": positive_n,
+            "Mean Rank": round(positive_mean_rank, 2),
+            "Sum of Ranks": round(positive_sum_rank, 2),
+        },
+        {
+            "Dataset": dataset_name,
+            "Variabel": variable_label,
+            "Ranks": "Ties",
+            "N": ties_count,
+            "Mean Rank": 0.00,
+            "Sum of Ranks": 0.00,
+        },
+        {
+            "Dataset": dataset_name,
+            "Variabel": variable_label,
+            "Ranks": "Total",
+            "N": total_n,
+            "Mean Rank": "",
+            "Sum of Ranks": "",
+        },
+    ]
+
+    return rank_rows
 # ============================================================
 # Fungsi bantu uji Wilcoxon dan ringkasan statistik
 # ============================================================
@@ -126,6 +209,7 @@ def run_wilcoxon(dataset_name, ae_ga, ae_gaco, table_number):
 
     table_rows = [
         {
+            "Tabel": table_number,
             "Dataset": dataset_name,
             "Metode": "Algoritma Genetika (GA)",
             "N": len(ae_ga),
@@ -133,10 +217,11 @@ def run_wilcoxon(dataset_name, ae_ga, ae_gaco, table_number):
             "Median AE": round(median_ga, 3),
             "Standar Deviasi AE": round(std_ga, 3),
             "Statistik Wilcoxon": round(stat_two_sided, 3),
-            "p-value": p_two_sided,
+            "Asymp. Sig. (2-tailed)": p_two_sided,
             "Keputusan": keputusan,
         },
         {
+            "Tabel": table_number,
             "Dataset": dataset_name,
             "Metode": "Genetic Algorithm + ACO (GACO)",
             "N": len(ae_gaco),
@@ -144,7 +229,7 @@ def run_wilcoxon(dataset_name, ae_ga, ae_gaco, table_number):
             "Median AE": round(median_gaco, 3),
             "Standar Deviasi AE": round(std_gaco, 3),
             "Statistik Wilcoxon": "",
-            "p-value": "",
+            "Asymp. Sig. (2-tailed)": "",
             "Keputusan": kesimpulan,
         },
     ]
@@ -165,7 +250,7 @@ def run_wilcoxon(dataset_name, ae_ga, ae_gaco, table_number):
         "Jumlah Proyek GA Lebih Baik": jumlah_ga_lebih_baik,
         "Jumlah Proyek Sama": jumlah_sama,
         "Statistik Wilcoxon": stat_two_sided,
-        "p-value": p_two_sided,
+        "Asymp. Sig. (2-tailed)": p_two_sided,
         "Keputusan": keputusan,
         "Kesimpulan": kesimpulan,
         "Arah Perbandingan MAE": arah_perbandingan,
@@ -185,26 +270,43 @@ def run_wilcoxon(dataset_name, ae_ga, ae_gaco, table_number):
     return table_rows, comparison_row, detail_rows
 
 
-#
-# Untuk saat ini hanya dataset Maxwell yang digunakan karena data Ziauddin belum final.
-# Jika data Ziauddin sudah final, tambahkan kembali baris:
-# ("Ziauddin", ae_algen_zia, ae_gaco_zia, "Tabel 4.3"),
+# ============================================================
+# Eksekusi uji Wilcoxon Signed-Rank Test untuk dua dataset
+# ============================================================
 datasets = [
-    ("Maxwell", ae_algen_maxwell, ae_gaco_maxwell, "Tabel 4.2"),
+    (
+        "Maxwell",
+        ae_algen_maxwell,
+        ae_gaco_maxwell,
+        "Tabel 4.2",
+        "Estimasi usaha Maxwell GA - Estimasi usaha Maxwell GACO",
+    ),
+    (
+        "Ziauddin",
+        ae_algen_zia,
+        ae_gaco_zia,
+        "Tabel 4.3",
+        "Estimasi usaha Agile GA - Estimasi usaha Agile GACO Ziauddin",
+    ),
 ]
 
 table_rows = []
+rank_rows = []
 comparison_rows = []
 detail_rows = []
 
-for dataset_name, ae_ga, ae_gaco, table_number in datasets:
+for dataset_name, ae_ga, ae_gaco, table_number, variable_label in datasets:
     table_result, comparison, detail = run_wilcoxon(dataset_name, ae_ga, ae_gaco, table_number)
+    ranks_result = calculate_wilcoxon_ranks(dataset_name, ae_ga, ae_gaco, variable_label)
+
     table_rows.extend(table_result)
+    rank_rows.extend(ranks_result)
     comparison_rows.append(comparison)
     detail_rows.extend(detail)
 
 
 df_tables = pd.DataFrame(table_rows)
+df_ranks = pd.DataFrame(rank_rows)
 df_comparison = pd.DataFrame(comparison_rows)
 df_detail = pd.DataFrame(detail_rows)
 
@@ -212,39 +314,62 @@ df_detail = pd.DataFrame(detail_rows)
 # ============================================================
 # Export hasil ke CSV dan Excel
 # ============================================================
-df_tables.to_csv("tabel_4_2_wilcoxon_maxwell.csv", index=False)
-df_comparison.to_csv("ringkasan_wilcoxon_maxwell.csv", index=False)
-df_detail.to_csv("detail_ae_maxwell.csv", index=False)
+df_tables.to_csv("hasil_wilcoxon_test_statistics.csv", index=False)
+df_ranks.to_csv("hasil_wilcoxon_ranks.csv", index=False)
+df_comparison.to_csv("hasil_wilcoxon_ringkasan_komparasi.csv", index=False)
+df_detail.to_csv("hasil_wilcoxon_detail_ae.csv", index=False)
 
-with pd.ExcelWriter("tabel_4_2_wilcoxon_maxwell.xlsx") as writer:
-    df_tables.to_excel(writer, sheet_name="Tabel 4.2", index=False)
-    df_comparison.to_excel(writer, sheet_name="Ringkasan", index=False)
+with pd.ExcelWriter("hasil_wilcoxon_maxwell_ziauddin.xlsx") as writer:
+    df_tables.to_excel(writer, sheet_name="Test Statistics", index=False)
+    df_ranks.to_excel(writer, sheet_name="Ranks", index=False)
+    df_comparison.to_excel(writer, sheet_name="Ringkasan Komparasi", index=False)
     df_detail.to_excel(writer, sheet_name="Detail AE", index=False)
 
 
 # ============================================================
 # Print hasil ke terminal
 # ============================================================
-print("===== TABEL 4.2 HASIL UJI WILCOXON SIGNED-RANK TEST DATASET MAXWELL =====")
+print("===== HASIL UJI WILCOXON SIGNED-RANK TEST =====")
+print("Hipotesis:")
+print("H0: Tidak terdapat perbedaan signifikan antara hasil estimasi effort GA dan GACO.")
+print("H1: Terdapat perbedaan signifikan antara hasil estimasi effort GA dan GACO.")
+print("Kriteria keputusan:")
+print("Asymp. Sig. < 0,05 maka H0 ditolak dan H1 diterima.")
+print("Asymp. Sig. > 0,05 maka H0 gagal ditolak.")
+print()
+
+for dataset_name in df_ranks["Dataset"].unique():
+    print(f"===== RANKS DATASET {dataset_name.upper()} =====")
+    rank_table = df_ranks[df_ranks["Dataset"] == dataset_name]
+    print(rank_table[["Variabel", "Ranks", "N", "Mean Rank", "Sum of Ranks"]].to_string(index=False))
+    print()
+
+print("===== TEST STATISTICS =====")
 print(df_tables.to_string(index=False))
 print()
-print("===== RINGKASAN INTERPRETASI =====")
-row = df_comparison.iloc[0]
-print(f"Dataset                         : {row['Dataset']}")
-print(f"Jumlah data                     : {row['Jumlah Data']}")
-print(f"MAE GA                          : {row['MAE GA']:.3f}")
-print(f"MAE GACO                        : {row['MAE GACO']:.3f}")
-print(f"Selisih MAE (GA - GACO)         : {row['Selisih MAE (GA - GACO)']:.3f}")
-print(f"Persentase penurunan MAE        : {row['Persentase Penurunan MAE (%)']:.3f}%")
-print(f"Jumlah proyek GACO lebih baik   : {row['Jumlah Proyek GACO Lebih Baik']}")
-print(f"Jumlah proyek GA lebih baik     : {row['Jumlah Proyek GA Lebih Baik']}")
-print(f"Statistik Wilcoxon              : {row['Statistik Wilcoxon']:.3f}")
-print(f"p-value                         : {row['p-value']}")
-print(f"Keputusan                       : {row['Keputusan']}")
-print(f"Kesimpulan                      : {row['Kesimpulan']}")
+
+print("===== RINGKASAN KOMPARASI DATASET =====")
+for _, row in df_comparison.iterrows():
+    print(f"Dataset                         : {row['Dataset']}")
+    print(f"Jumlah data                     : {row['Jumlah Data']}")
+    print(f"MAE GA                          : {row['MAE GA']:.3f}")
+    print(f"MAE GACO                        : {row['MAE GACO']:.3f}")
+    print(f"Selisih MAE (GA - GACO)         : {row['Selisih MAE (GA - GACO)']:.3f}")
+    print(f"Persentase penurunan MAE        : {row['Persentase Penurunan MAE (%)']:.3f}%")
+    print(f"Jumlah proyek GACO lebih baik   : {row['Jumlah Proyek GACO Lebih Baik']}")
+    print(f"Jumlah proyek GA lebih baik     : {row['Jumlah Proyek GA Lebih Baik']}")
+    print(f"Jumlah proyek sama              : {row['Jumlah Proyek Sama']}")
+    print(f"Statistik Wilcoxon              : {row['Statistik Wilcoxon']:.3f}")
+    print(f"Asymp. Sig. (2-tailed)          : {row['Asymp. Sig. (2-tailed)']}")
+    print(f"Keputusan                       : {row['Keputusan']}")
+    print(f"Kesimpulan                      : {row['Kesimpulan']}")
+    print(f"Arah perbandingan MAE           : {row['Arah Perbandingan MAE']}")
+    print("-" * 80)
+
 print()
 print("File berhasil disimpan:")
-print("- tabel_4_2_wilcoxon_maxwell.csv")
-print("- ringkasan_wilcoxon_maxwell.csv")
-print("- detail_ae_maxwell.csv")
-print("- tabel_4_2_wilcoxon_maxwell.xlsx")
+print("- hasil_wilcoxon_test_statistics.csv")
+print("- hasil_wilcoxon_ranks.csv")
+print("- hasil_wilcoxon_ringkasan_komparasi.csv")
+print("- hasil_wilcoxon_detail_ae.csv")
+print("- hasil_wilcoxon_maxwell_ziauddin.xlsx")
