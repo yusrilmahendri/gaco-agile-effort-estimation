@@ -4,7 +4,7 @@ import math
 import random
 import statistics
 import bisect
-
+import sys
 import datasetMaxwel as dt
 import parameter as pr
 import random_guessing as rg
@@ -296,7 +296,14 @@ class HybridGA_InitACO_Maxwell:
                     ]
 
                     if random.random() < self.q0:
-                        selected_bin = max(range(bins), key=lambda i: scores[i])
+                        # Eksploitasi: pilih salah satu bin terbaik secara acak
+                        # agar tidak bias ke bin pertama ketika skor sama.
+                        max_score = max(scores)
+                        best_bins = [
+                            i for i, score in enumerate(scores)
+                            if abs(score - max_score) < 1e-12
+                        ]
+                        selected_bin = random.choice(best_bins)
                     else:
                         total_score = sum(scores) or 1.0
                         r = random.random()
@@ -389,9 +396,9 @@ class HybridGA_InitACO_Maxwell:
                 vi,
                 effort,
                 actual,
-                n_ants=30,
-                n_iters=10,
-                bins=10
+                n_ants=50,
+                n_iters=25,
+                bins=15
             )
 
             # ====================================================
@@ -477,9 +484,13 @@ class HybridGA_InitACO_Maxwell:
                     break
 
             best_generation_results.append(best_generation)
+   
+            # print(best_estimated)
 
+            # print(actual)
             ae_results.append(best_AE)
             estimated_results.append(best_estimated)
+     
             actual_results.append(actual)
 
         MAE = sum(ae_results) / len(ae_results) if ae_results else float("inf")
@@ -512,7 +523,7 @@ if __name__ == "__main__":
         # Parameter GA
         # =========================
         "popsize": 40,
-        "crossoverRate": 0.7,
+        "crossoverRate": 0.25,
         "numOfDimension": len(ranges),
         "mutationRate": 0.05,
         "ranges": ranges,
@@ -527,12 +538,12 @@ if __name__ == "__main__":
         # Parameter ACO
         # =========================
         "rho": 0.1,
-        "alpha": 1.0,
-        "beta": 2.0,
+        "alpha": 1.5,
+        "beta": 1.0,
         "q0": 0.5,
         "tau_init": 1.0,
         "tau_min": 1e-6,
-        "tau_max": 100.0,
+        "tau_max": 50.0,
 
         # =========================
         # Mapping kolom dataset Maxwell
@@ -595,10 +606,16 @@ if __name__ == "__main__":
         for actual, estimated in zip(actualEfforts, estimatedEfforts)
     ) / len(actualEfforts)
 
-    print("\n===== EVALUASI TAMBAHAN =====")
-    print("MAE GACO:", MAE)
-    print("MAE P0 Random Guessing:", MAE_P0)
-    print("Standard Accuracy:", SA)
-    print("Effect Size:", ES)
-    print("MBRE:", MBRE)
-    print("MIBRE:", MIBRE)
+    # print("\n===== EVALUASI TAMBAHAN =====")
+    # print("MAE GACO:", MAE)
+    # print("MAE P0 Random Guessing:", MAE_P0)
+    # print("Standard Accuracy:", SA)
+    # print("Effect Size:", ES)
+    # print("MBRE:", MBRE)
+    # print("MIBRE:", MIBRE)
+
+    print("\n===== DATA UNTUK UJI WILCOXON =====")
+    print("ae_gaco_maxwell = [")
+    for ae in result["AEs"]:
+        print(f"    {ae},")
+    print("]")

@@ -1,5 +1,0 @@
-Tabel,Dataset,Metode,N,Rata-rata AE / MAE,Median AE,Standar Deviasi AE,Statistik Wilcoxon,Asymp. Sig. (2-tailed),Keputusan
-Tabel 4.2,Maxwell,Algoritma Genetika (GA),62,5734.158,4414.694,6121.498,0.0,7.577765262336002e-12,H0 ditolak
-Tabel 4.2,Maxwell,Genetic Algorithm + ACO (GACO),62,1354.345,938.738,1424.164,,,Terdapat perbedaan signifikan
-Tabel 4.3,Ziauddin,Algoritma Genetika (GA),21,52.831,45.845,24.568,57.0,0.042079925537109375,H0 ditolak
-Tabel 4.3,Ziauddin,Genetic Algorithm + ACO (GACO),21,54.99,51.987,24.851,,,Terdapat perbedaan signifikan

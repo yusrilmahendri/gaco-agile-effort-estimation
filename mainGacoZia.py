@@ -49,7 +49,7 @@ class HybridGA_InitACO_Ziauddin:
         self.rho = parameterSetting.get("rho", 0.1)
         self.alpha = parameterSetting.get("alpha", 1.0)
         self.beta = parameterSetting.get("beta", 2.0)
-        self.q0 = parameterSetting.get("q0", 0.5)
+        self.q0 = parameterSetting.get("q0", 0.7)
         self.tau_init = parameterSetting.get("tau_init", 1.0)
         self.tau_min = parameterSetting.get("tau_min", 1e-6)
         self.tau_max = parameterSetting.get("tau_max", 100.0)
@@ -302,7 +302,12 @@ class HybridGA_InitACO_Ziauddin:
 
                     if random.random() < self.q0:
                         # Eksploitasi: pilih bin dengan skor tertinggi
-                        selected_bin = max(range(bins), key=lambda i: scores[i])
+                        max_score = max(scores)
+                        best_bins = [
+                            i for i, score in enumerate(scores)
+                            if abs(score - max_score) < 1e-12
+                        ]
+                        selected_bin = random.choice(best_bins)
                     else:
                         # Eksplorasi: pilih bin berdasarkan probabilitas
                         total_score = sum(scores) or 1.0
@@ -354,6 +359,45 @@ class HybridGA_InitACO_Ziauddin:
 
         return initial_population
 
+    def _local_refine_chromosome(self, chromosome, vi, effort, actual, max_steps=5):
+        """
+        Memperbaiki kromosom hasil ACO menggunakan pencarian lokal sederhana.
+
+        Tujuan:
+        - Mengurangi AE ekstrem pada proyek tertentu.
+        - Menjaga agar populasi awal GACO tetap berbasis ACO.
+        - Tidak mengubah struktur utama GA, hanya memperbaiki kandidat awal.
+        """
+
+        best_chromosome = chromosome[:]
+        best_lnD = self._lnD(best_chromosome)
+        best_ae, _ = self._calc_AE(best_lnD, vi, effort, actual)
+
+        for _ in range(max_steps):
+            improved = False
+
+            for dimension in range(self.numOfDimension):
+                lb, ub = self.ranges[dimension]
+                step = 0.02 * (ub - lb)
+
+                for direction in (-1, 1):
+                    candidate = best_chromosome[:]
+                    candidate[dimension] = candidate[dimension] + direction * step
+                    candidate[dimension] = max(lb, min(ub, candidate[dimension]))
+
+                    candidate_lnD = self._lnD(candidate)
+                    candidate_ae, _ = self._calc_AE(candidate_lnD, vi, effort, actual)
+
+                    if candidate_ae + 1e-12 < best_ae:
+                        best_chromosome = candidate
+                        best_ae = candidate_ae
+                        improved = True
+
+            if not improved:
+                break
+
+        return best_chromosome
+
     # ============================================================
     # Main process
     # ============================================================
@@ -383,9 +427,9 @@ class HybridGA_InitACO_Ziauddin:
                 vi,
                 effort,
                 actual,
-                n_ants=30,
-                n_iters=10,
-                bins=10
+                n_ants=50,
+                n_iters=25,
+                bins=15
             )
 
             # ====================================================
@@ -474,9 +518,12 @@ class HybridGA_InitACO_Ziauddin:
 
             # Simpan hasil setiap proyek
             best_generation_results.append(best_generation)
-
+            # print(best_estimated)
             ae_results.append(best_AE)
             estimated_results.append(best_estimated)
+
+        
+
             actual_results.append(actual)
 
         # ========================================================
@@ -510,7 +557,7 @@ if __name__ == "__main__":
         "popsize": 40,
         "crossoverRate": 0.25,
         "numOfDimension": len(ranges),
-        "mutationRate": 1 / 13,
+        "mutationRate": 0.05,
         "ranges": ranges,
         "maxIter": 60,
         "stoppingFitness": 0.03,
@@ -523,12 +570,12 @@ if __name__ == "__main__":
         # Parameter ACO untuk inisialisasi
         # =========================
         "rho": 0.1,
-        "alpha": 1.0,
-        "beta": 2.0,
+        "alpha": 1.5,
+        "beta": 1.0,
         "q0": 0.5,
         "tau_init": 1.0,
         "tau_min": 1e-6,
-        "tau_max": 100.0,
+        "tau_max": 50.0,
 
         # =========================
         # Mapping kolom dataset Ziauddin
@@ -547,6 +594,10 @@ if __name__ == "__main__":
     print("Standar Deviasi Fitness Awal:", result["Standar Deviasi Fitness Awal"])
     print("Generasi Menuju Fitness Terbaik:", result["Generasi Menuju Fitness Terbaik"])
     print("MAE Akhir:", result["MAE"])
+    # print("AEs Per Project:", result["AEs"])
+    # print("Jumlah AE:", len(result["AEs"]))
+    # for index, ae in enumerate(result["AEs"], start=1):
+    #     print(f"AE Project {index}: {ae}")
 
     # ========================================================
     # Evaluasi baseline random guessing
@@ -594,10 +645,16 @@ if __name__ == "__main__":
         for actual, estimated in zip(actualEfforts, estimatedEfforts)
     ) / len(actualEfforts)
 
-    print("\n===== EVALUASI TAMBAHAN =====")
-    print("MAE GACO:", MAE)
-    print("MAE P0 Random Guessing:", MAE_P0)
-    print("Standard Accuracy:", SA)
-    print("Effect Size:", ES)
-    print("MBRE:", MBRE)
-    print("MIBRE:", MIBRE)
+    # print("\n===== EVALUASI TAMBAHAN =====")
+    # print("MAE GACO:", MAE)
+    # print("MAE P0 Random Guessing:", MAE_P0)
+    # print("Standard Accuracy:", SA)
+    # print("Effect Size:", ES)
+    # print("MBRE:", MBRE)
+    # print("MIBRE:", MIBRE)
+
+    print("\n===== DATA UNTUK UJI WILCOXON =====")
+    print("ae_gaco_zia = [")
+    for ae in result["AEs"]:
+        print(f"    {ae},")
+    print("]")

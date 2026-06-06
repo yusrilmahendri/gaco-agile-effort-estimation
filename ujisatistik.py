@@ -1,42 +1,245 @@
-from scipy.stats import wilcoxon
-from scipy.stats import rankdata
-import pandas as pd
+import csv
+import math
 import statistics
+
+
+# ============================================================
+# Fungsi statistik tanpa scipy
+# ============================================================
+def rankdata(values):
+    """
+    Menghitung ranking dengan metode average rank untuk nilai yang sama.
+    Fungsi ini digunakan sebagai pengganti scipy.stats.rankdata.
+    """
+    indexed_values = sorted((value, index) for index, value in enumerate(values))
+    ranks = [0.0] * len(values)
+    i = 0
+
+    while i < len(indexed_values):
+        j = i
+        while j + 1 < len(indexed_values) and indexed_values[j + 1][0] == indexed_values[i][0]:
+            j += 1
+
+        average_rank = (i + 1 + j + 1) / 2.0
+
+        for k in range(i, j + 1):
+            original_index = indexed_values[k][1]
+            ranks[original_index] = average_rank
+
+        i = j + 1
+
+    return ranks
+
+
+def normal_cdf(z):
+    """
+    Menghitung cumulative distribution function untuk distribusi normal standar.
+    """
+    return 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
+
+
+def wilcoxon(ae_ga, ae_gaco, alternative="two-sided", zero_method="wilcox"):
+    """
+    Menghitung Wilcoxon Signed-Rank Test tanpa scipy.
+
+    Parameter alternative dan zero_method dipertahankan agar pemanggilan fungsi
+    tetap sama seperti scipy.stats.wilcoxon pada kode sebelumnya.
+    """
+    if alternative != "two-sided":
+        raise ValueError("Fungsi ini hanya mendukung alternative='two-sided'.")
+
+    if zero_method != "wilcox":
+        raise ValueError("Fungsi ini hanya mendukung zero_method='wilcox'.")
+
+    differences = [ga - gaco for ga, gaco in zip(ae_ga, ae_gaco)]
+    non_zero_differences = [diff for diff in differences if diff != 0]
+
+    if len(non_zero_differences) == 0:
+        return 0.0, 1.0
+
+    abs_differences = [abs(diff) for diff in non_zero_differences]
+    ranks = rankdata(abs_differences)
+
+    positive_rank_sum = sum(
+        rank for diff, rank in zip(non_zero_differences, ranks) if diff > 0
+    )
+    negative_rank_sum = sum(
+        rank for diff, rank in zip(non_zero_differences, ranks) if diff < 0
+    )
+
+    statistic = min(positive_rank_sum, negative_rank_sum)
+    n = len(non_zero_differences)
+
+    # Exact p-value digunakan untuk data kecil tanpa tied ranks.
+    ranks_are_integer = all(abs(rank - round(rank)) < 1e-12 for rank in ranks)
+
+    if n <= 25 and ranks_are_integer:
+        integer_ranks = [int(round(rank)) for rank in ranks]
+        total_rank_sum = sum(integer_ranks)
+        target_statistic = int(round(statistic))
+
+        counts = {0: 1}
+        for rank in integer_ranks:
+            next_counts = counts.copy()
+            for current_sum, count in counts.items():
+                new_sum = current_sum + rank
+                next_counts[new_sum] = next_counts.get(new_sum, 0) + count
+            counts = next_counts
+
+        extreme_count = 0
+        total_combinations = 2 ** n
+        for rank_sum, count in counts.items():
+            if min(rank_sum, total_rank_sum - rank_sum) <= target_statistic:
+                extreme_count += count
+
+        p_value = min(1.0, extreme_count / total_combinations)
+        return float(statistic), p_value
+
+    # Normal approximation digunakan untuk data besar.
+    mean_rank_sum = n * (n + 1) / 4.0
+    variance_rank_sum = n * (n + 1) * (2 * n + 1) / 24.0
+    standard_deviation = math.sqrt(variance_rank_sum)
+
+    if statistic < mean_rank_sum:
+        z_score = (statistic - mean_rank_sum + 0.5) / standard_deviation
+    else:
+        z_score = (statistic - mean_rank_sum - 0.5) / standard_deviation
+
+    p_value = 2.0 * min(normal_cdf(z_score), 1.0 - normal_cdf(z_score))
+    return float(statistic), p_value
 
 
 # ============================================================
 # Data Absolute Error Dataset Maxwell
 # ============================================================
 ae_algen_maxwell = [
-    4922.80909, 635.056357, 1595.122799, 12730.48117, 2332.396446,
-    1902.899019, 5467.739143, 6120.645915, 9515.857127, 3031.758876,
-    2925.696729, 715.39284, 484.6342048, 1965.276065, 2944.782741,
-    1217.056816, 13978.09507, 26695.70585, 10648.69769, 7407.579548,
-    10324.13994, 6682.466398, 4894.217458, 5344.03798, 3605.692305,
-    28805.09419, 1147.357289, 1096.931173, 1293.340491, 1192.154262,
-    2221.850411, 768.9755224, 892.2902272, 2365.056975, 6083.031,
-    4993.476326, 3036.064659, 11421.75561, 4993.620687, 7977.105098,
-    992.5988843, 4870.980658, 951.3883239, 4769.551748, 6682.200693,
-    8028.718375, 707.9818663, 9121.34065, 1552.765328, 4851.029963,
-    3953.739372, 3162.338502, 3935.016426, 7698.497188, 3070.597794,
-    1701.957774, 10806.23678, 6261.490982, 5859.163415, 4059.836332,
-    6501.923677, 29602.09309
+    1453.6146631430515,
+    68.10361763959511,
+    520.0176136351073,
+    4035.3452885180322,
+    389.60959455313446,
+    601.1659140123028,
+    1207.9935853300535,
+    2349.921732923688,
+    2926.3136736392844,
+    945.5006695453865,
+    522.0224321079725,
+    358.9649474393213,
+    248.91679685133965,
+    660.5158470607474,
+    823.8689118472698,
+    277.7056413497287,
+    7507.405162274341,
+    4876.472150366699,
+    3444.18856467141,
+    1892.3838744955942,
+    2026.381887487346,
+    2015.1301826562776,
+    2421.8068108990606,
+    3206.7758734435433,
+    1958.3049467343753,
+    5998.804854457932,
+    212.07327111490423,
+    365.10806913170507,
+    703.1969689756728,
+    361.70937218909785,
+    526.7178840234106,
+    116.88529690637745,
+    191.9807306481096,
+    0.05497518026754733,
+    257.39168668411116,
+    668.6125248366882,
+    707.3979566715179,
+    4562.075785372979,
+    3134.9462560867523,
+    4348.195144547746,
+    533.5885205996326,
+    3183.4759872552454,
+    580.365754538055,
+    3429.1790383074604,
+    5049.143318730262,
+    3854.769682732167,
+    443.7090464025496,
+    6234.16211086505,
+    972.9960759355574,
+    2117.0050823801835,
+    1851.2102067700375,
+    1420.3579884129604,
+    2185.4309230657573,
+    4433.099447469027,
+    1842.240858308718,
+    818.8258704924913,
+    6304.785768821387,
+    3472.768693299179,
+    2682.326736439091,
+    2858.785397682399,
+    3947.157150647504,
+    16710.343358911792,
 ]
 
 ae_gaco_maxwell = [
-    647.072031, 129.9276801, 253.9839432, 1055.882666, 382.9680742,
-    345.0114111, 822.4441316, 1240.844265, 1657.74296, 484.3363303,
-    739.0635308, 107.9687193, 128.7990153, 358.8136597, 370.9928591,
-    210.9808581, 1849.440761, 2474.82118, 961.8781399, 671.1280756,
-    2953.282589, 501.382805, 915.5972138, 873.7065361, 463.3890854,
-    3920.446804, 253.0138188, 195.5937809, 248.2413269, 386.9880913,
-    424.826989, 204.0222912, 177.2536168, 839.9512285, 1647.837104,
-    1035.147986, 547.8520413, 2734.364649, 1459.571296, 2546.128826,
-    434.2032316, 2084.939997, 529.5821319, 2315.69983, 2848.310336,
-    3214.166675, 318.1100312, 2963.140759, 504.6854668, 1570.495442,
-    1645.947751, 1046.465096, 2228.492384, 2598.512082, 1038.510068,
-    1003.335943, 2699.877999, 2255.310045, 1946.446009, 1881.109259,
-    2210.261651, 9409.074245
+    0.43159543970341474,
+    0.028653023685592416,
+    0.027482880725699488,
+    202.94555614397223,
+    289.3190161275695,
+    0.23415631683241145,
+    474.8338578034037,
+    453.5689389736244,
+    687.7522456707027,
+    132.25407350517452,
+    0.24273185385902707,
+    1.0749530972477288,
+    70.19526967340622,
+    8.185687649970532,
+    95.2503002655165,
+    58.94646618380705,
+    1.0721458526375045,
+    1.0664010655382299,
+    463.03526997049266,
+    1095.1041088026914,
+    0.4857140556587183,
+    130.4749191018198,
+    306.4511327024402,
+    238.77379675360748,
+    0.08910178680929448,
+    0.24512229479023517,
+    0.04470054032131543,
+    0.01139538445056587,
+    24.58416195379209,
+    0.01999667878180844,
+    0.08168563625696379,
+    0.03334203988265472,
+    44.87047732286787,
+    0.40358626344846016,
+    0.02884673479502453,
+    0.03765212252051242,
+    0.4604173129090441,
+    1911.3944893327957,
+    1312.1805008732617,
+    1592.9769737216693,
+    270.8666263794628,
+    1838.2996757667297,
+    444.2595892103781,
+    2269.2314129979654,
+    2400.4109115646834,
+    1621.1926434494412,
+    225.68049246475118,
+    3892.177730696698,
+    364.5555391870712,
+    286.04163119395344,
+    1061.0399118076625,
+    695.4708724297484,
+    850.3264827407529,
+    3013.016125775554,
+    939.3261683679909,
+    544.2546637926217,
+    2486.990334410414,
+    1351.9005202624412,
+    1268.292182289487,
+    1288.9469636223016,
+    1677.9279767609492,
+    6409.638822523815,
 ]
 
 
@@ -44,21 +247,51 @@ ae_gaco_maxwell = [
 # Data Absolute Error Dataset Ziauddin
 # ============================================================
 ae_algen_zia = [
-    58.00350052, 80.97989152, 51.94129062, 45.84534862,
-    34.60792893, 106.5267196, 28.88216303, 84.70855991,
-    35.00129577, 66.02780003, 40.99201217, 38.96668158,
-    35.00644373, 25.98593576, 21.99470607, 102.9807793,
-    40.01291212, 49.98487598, 76.02435325, 50.99512232,
-    33.97562046
+    0.02509048211584286,
+    0.0023156018600758443,
+    0.0077600736054606045,
+    27.010826909858466,
+    0.023904830461148663,
+    56.04833321322228,
+    0.0004883574653078426,
+    0.007326521676432662,
+    0.027185997366359516,
+    0.003816992462610358,
+    0.017663285690858288,
+    0.02637258794075592,
+    0.0032967151809373263,
+    0.00785677338292956,
+    0.008273320853341204,
+    0.016209084242021277,
+    0.016398198156124977,
+    0.025175745417911344,
+    0.021567529237245253,
+    0.016475463658132128,
+    0.016732581727488594,
 ]
 
 ae_gaco_zia = [
-    62.99117734, 92.01368609, 55.99461247, 63.76621792,
-    31.99396456, 83.0151176, 35.00755978, 92.99996588,
-    35.99916051, 62.01644315, 45.00041312, 37.01291564,
-    31.9964652, 30.00113685, 20.99666635, 111.9804098,
-    38.99929481, 51.9868647, 79.99974037, 56.01685318,
-    34.99340775
+    0.0036663034305348674,
+    0.009085118331327635,
+    0.001041792351564652,
+    23.955837325262934,
+    0.007668137332451863,
+    50.6829268292683,
+    0.0010750965282682046,
+    0.00011479576296835603,
+    0.002385975944086738,
+    0.0043233390584092035,
+    0.004609526942061848,
+    0.0024781000322562363,
+    0.0013733847097938678,
+    0.0018060249931224348,
+    0.0003522948156557959,
+    0.0014294328793909017,
+    0.0005184500227031208,
+    0.004122102363709246,
+    0.0068621292286081825,
+    0.0011985255624082924,
+    0.00022168203274475218,
 ]
 
 
@@ -83,7 +316,7 @@ def calculate_wilcoxon_ranks(dataset_name, ae_ga, ae_gaco, variable_label):
     non_zero_abs_diff = [abs(diff) for diff in differences if diff != 0]
 
     if len(non_zero_abs_diff) > 0:
-        ranks = rankdata(non_zero_abs_diff, method="average")
+        ranks = rankdata(non_zero_abs_diff)
     else:
         ranks = []
 
@@ -278,14 +511,14 @@ datasets = [
         "Maxwell",
         ae_algen_maxwell,
         ae_gaco_maxwell,
-        "Tabel 4.2",
+        "Tabel 4.3",
         "Estimasi usaha Maxwell GA - Estimasi usaha Maxwell GACO",
     ),
     (
         "Ziauddin",
         ae_algen_zia,
         ae_gaco_zia,
-        "Tabel 4.3",
+        "Tabel 4.4",
         "Estimasi usaha Agile GA - Estimasi usaha Agile GACO Ziauddin",
     ),
 ]
@@ -294,6 +527,44 @@ table_rows = []
 rank_rows = []
 comparison_rows = []
 detail_rows = []
+
+# ============================================================
+# Export hasil ke CSV tanpa pandas/openpyxl
+# ============================================================
+def write_csv(filename, rows):
+    if not rows:
+        return
+
+    fieldnames = list(rows[0].keys())
+
+    with open(filename, "w", newline="", encoding="utf-8") as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def format_table(rows, columns):
+    if not rows:
+        return ""
+
+    formatted_rows = []
+    for row in rows:
+        formatted_rows.append([str(row.get(column, "")) for column in columns])
+
+    widths = []
+    for index, column in enumerate(columns):
+        max_cell_width = max(len(row[index]) for row in formatted_rows) if formatted_rows else 0
+        widths.append(max(len(column), max_cell_width))
+
+    header = " | ".join(column.ljust(widths[index]) for index, column in enumerate(columns))
+    separator = "-+-".join("-" * width for width in widths)
+    body = "\n".join(
+        " | ".join(row[index].ljust(widths[index]) for index in range(len(columns)))
+        for row in formatted_rows
+    )
+
+    return header + "\n" + separator + "\n" + body
+
 
 for dataset_name, ae_ga, ae_gaco, table_number, variable_label in datasets:
     table_result, comparison, detail = run_wilcoxon(dataset_name, ae_ga, ae_gaco, table_number)
@@ -305,25 +576,10 @@ for dataset_name, ae_ga, ae_gaco, table_number, variable_label in datasets:
     detail_rows.extend(detail)
 
 
-df_tables = pd.DataFrame(table_rows)
-df_ranks = pd.DataFrame(rank_rows)
-df_comparison = pd.DataFrame(comparison_rows)
-df_detail = pd.DataFrame(detail_rows)
-
-
-# ============================================================
-# Export hasil ke CSV dan Excel
-# ============================================================
-df_tables.to_csv("hasil_wilcoxon_test_statistics.csv", index=False)
-df_ranks.to_csv("hasil_wilcoxon_ranks.csv", index=False)
-df_comparison.to_csv("hasil_wilcoxon_ringkasan_komparasi.csv", index=False)
-df_detail.to_csv("hasil_wilcoxon_detail_ae.csv", index=False)
-
-with pd.ExcelWriter("hasil_wilcoxon_maxwell_ziauddin.xlsx") as writer:
-    df_tables.to_excel(writer, sheet_name="Test Statistics", index=False)
-    df_ranks.to_excel(writer, sheet_name="Ranks", index=False)
-    df_comparison.to_excel(writer, sheet_name="Ringkasan Komparasi", index=False)
-    df_detail.to_excel(writer, sheet_name="Detail AE", index=False)
+# write_csv("hasil_wilcoxon_test_statistics.csv", table_rows)
+# write_csv("hasil_wilcoxon_ranks.csv", rank_rows)
+# write_csv("hasil_wilcoxon_ringkasan_komparasi.csv", comparison_rows)
+# write_csv("hasil_wilcoxon_detail_ae.csv", detail_rows)
 
 
 # ============================================================
@@ -338,18 +594,37 @@ print("Asymp. Sig. < 0,05 maka H0 ditolak dan H1 diterima.")
 print("Asymp. Sig. > 0,05 maka H0 gagal ditolak.")
 print()
 
-for dataset_name in df_ranks["Dataset"].unique():
+dataset_names = []
+for row in rank_rows:
+    if row["Dataset"] not in dataset_names:
+        dataset_names.append(row["Dataset"])
+
+for dataset_name in dataset_names:
     print(f"===== RANKS DATASET {dataset_name.upper()} =====")
-    rank_table = df_ranks[df_ranks["Dataset"] == dataset_name]
-    print(rank_table[["Variabel", "Ranks", "N", "Mean Rank", "Sum of Ranks"]].to_string(index=False))
+    rank_table = [row for row in rank_rows if row["Dataset"] == dataset_name]
+    print(format_table(rank_table, ["Variabel", "Ranks", "N", "Mean Rank", "Sum of Ranks"]))
     print()
 
 print("===== TEST STATISTICS =====")
-print(df_tables.to_string(index=False))
+print(format_table(
+    table_rows,
+    [
+        "Tabel",
+        "Dataset",
+        "Metode",
+        "N",
+        "Rata-rata AE / MAE",
+        "Median AE",
+        "Standar Deviasi AE",
+        "Statistik Wilcoxon",
+        "Asymp. Sig. (2-tailed)",
+        "Keputusan",
+    ]
+))
 print()
 
 print("===== RINGKASAN KOMPARASI DATASET =====")
-for _, row in df_comparison.iterrows():
+for row in comparison_rows:
     print(f"Dataset                         : {row['Dataset']}")
     print(f"Jumlah data                     : {row['Jumlah Data']}")
     print(f"MAE GA                          : {row['MAE GA']:.3f}")
@@ -372,4 +647,3 @@ print("- hasil_wilcoxon_test_statistics.csv")
 print("- hasil_wilcoxon_ranks.csv")
 print("- hasil_wilcoxon_ringkasan_komparasi.csv")
 print("- hasil_wilcoxon_detail_ae.csv")
-print("- hasil_wilcoxon_maxwell_ziauddin.xlsx")

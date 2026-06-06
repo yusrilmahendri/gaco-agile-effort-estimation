@@ -353,7 +353,7 @@ class AlgoritmaGenetikaMaxwell:
 
                 population = new_population
                 scored = self.evaluate(population, vi, effort, actualEffort)
-
+  
                 # Update solusi terbaik
                 if scored[0][0] + 1e-12 < best_AE:
                     best_AE, best_chromosome, best_estEffort = scored[0]
@@ -367,10 +367,12 @@ class AlgoritmaGenetikaMaxwell:
                     break
 
             best_generation_results.append(best_generation)
-
+           
+            # print(best_estEffort)
             aeBestChromosomes.append(best_AE)
             estEffortBestChromosomes.append(best_estEffort)
             actualEfforts.append(actualEffort)
+            # print(actualEffort)
 
         MAE = (
             sum(aeBestChromosomes) / len(aeBestChromosomes)
@@ -408,7 +410,7 @@ if __name__ == "__main__":
         # Parameter GA
         # =========================
         "popsize": 40,
-        "crossoverRate": 0.7,
+        "crossoverRate": 0.25,
         "numOfDimension": len(ranges),
         "mutationRate": 0.05,
         "ranges": ranges,
@@ -476,10 +478,16 @@ if __name__ == "__main__":
         for actual, estimated in zip(actualEfforts, estEfforts)
     ) / len(actualEfforts)
 
-    print("\n===== EVALUASI TAMBAHAN =====")
-    print("MAE GA:", MAE)
-    print("MAE P0 Random Guessing:", MAE_P0)
-    print("Standard Accuracy:", SA)
-    print("Effect Size:", ES)
-    print("MBRE:", MBRE)
-    print("MIBRE:", MIBRE)
+    # print("\n===== EVALUASI TAMBAHAN =====")
+    # print("MAE GA:", MAE)
+    # print("MAE P0 Random Guessing:", MAE_P0)
+    # print("Standard Accuracy:", SA)
+    # print("Effect Size:", ES)
+    # print("MBRE:", MBRE)
+    # print("MIBRE:", MIBRE)
+
+    print("\n===== DATA UNTUK UJI WILCOXON =====")
+    print("ae_algen_maxwell = [")
+    for ae in hasil["AEs"]:
+        print(f"    {ae},")
+    print("]")
